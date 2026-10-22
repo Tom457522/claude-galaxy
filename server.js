@@ -10,10 +10,13 @@ const express = require('express');
 const { WebSocketServer } = require('ws');
 const pty = require('node-pty');
 const { buildGraph } = require('./graph');
+const appsStore = require('./apps');
 
 const IS_WIN = process.platform === 'win32';
 const HOST = '127.0.0.1'; // ローカルホスト限定(外部公開しない)
 const PORT = Number(process.env.PORT) || 3456;
+// ローカル Web アプリ専用のポート(本体と別オリジンにして、/api や /ws を触れないようにする)
+const APPS_PORT = Number(process.env.APPS_PORT) || PORT + 1;
 const DEFAULT_COMMAND = process.env.CLAUDE_CMD || 'claude';
 
 // Claude Code の標準インストール先が PATH に無い環境向けに、存在するものを PATH 末尾へ補う
@@ -174,6 +177,7 @@ const publicInfo = (s) => ({
   statusSince: s.statusSince,
   injected: s.injected,
   agents: s.agents,
+  appId: s.appId,
 });
 const emit = (s) => broadcast('session', publicInfo(s));
 
@@ -279,7 +283,7 @@ function applyHook(s, p) {
   emit(s);
 }
 
-function createSession({ name, cwd, command }) {
+function createSession({ name, cwd, command, appId }) {
   const id = `s${++seq}`;
   const workdir = resolveCwd(cwd);
   const cmdline = (command || DEFAULT_COMMAND).trim();
@@ -312,6 +316,7 @@ function createSession({ name, cwd, command }) {
     name: name || `session-${seq}`,
     cwd: workdir,
     command: cmdline,
+    appId: typeof appId === 'string' && appsStore.get(appId) ? appId : null,
     createdAt: Date.now(),
     alive: true,
     exitCode: null,
@@ -373,8 +378,8 @@ app.get('/api/sessions', (_req, res) => {
 
 app.post('/api/sessions', (req, res) => {
   try {
-    const { name, cwd, command } = req.body || {};
-    const s = createSession({ name, cwd, command });
+    const { name, cwd, command, appId } = req.body || {};
+    const s = createSession({ name, cwd, command, appId });
     res.status(201).json(publicInfo(s));
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -422,6 +427,41 @@ app.post('/api/graph', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ---- アプリ一覧(Web アプリ / コマンドアプリ) ----
+app.get('/api/apps', (_req, res) => res.json({ appsPort: APPS_PORT, apps: appsStore.list() }));
+app.post('/api/apps', (req, res) => {
+  try { res.status(201).json(appsStore.create(req.body || {})); } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.put('/api/apps/:id', (req, res) => {
+  try {
+    const a = appsStore.update(req.params.id, req.body || {});
+    if (!a) return res.status(404).json({ error: 'not found' });
+    res.json(a);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.delete('/api/apps/:id', (req, res) => {
+  if (!appsStore.remove(req.params.id)) return res.status(404).json({ error: 'not found' });
+  res.status(204).end();
+});
+// ローカルの Web アプリ(HTML ファイル / フォルダ)は別ポート(APPS_PORT)で配信する。
+// 本体とはオリジンが違うので、アプリ側から本体の /api や /ws を呼んでも Origin チェックで拒否される。
+const appsServer = express();
+appsServer.disable('x-powered-by');
+appsServer.use((req, res, next) => {
+  const host = (req.headers.host || '').split(':')[0];
+  if (host !== 'localhost' && host !== '127.0.0.1') return res.status(403).end('forbidden');
+  if (req.method !== 'GET' && req.method !== 'HEAD') return res.status(405).end();
+  next();
+});
+appsServer.use('/appfiles/:id', (req, res, next) => {
+  const handler = appsStore.staticHandler(req.params.id);
+  if (!handler) return res.status(404).end('not found');
+  res.setHeader('Cache-Control', 'no-store');
+  // 本体の画面からだけ iframe 表示を許す
+  res.setHeader('Content-Security-Policy', `frame-ancestors http://localhost:${PORT} http://127.0.0.1:${PORT}`);
+  handler(req, res, next);
 });
 
 // hook.js からのイベント受信(トークン必須)
@@ -492,6 +532,8 @@ writeHookSettings();
 server.listen(PORT, HOST, () => {
   console.log(`Claude Multi Term: http://localhost:${PORT}`);
 });
+http.createServer(appsServer).listen(APPS_PORT, HOST)
+  .on('error', (e) => console.error(`ローカル Web アプリ用ポート ${APPS_PORT} を開けません(${e.code})。APPS_PORT で変更できます。`));
 
 function shutdown() {
   for (const s of sessions.values()) {

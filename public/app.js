@@ -129,13 +129,15 @@ function mascotImageURL(status) {
 }
 
 // ---------- タブ ----------
-let curTab = localStorage.getItem('tab') === 'term' ? 'term' : 'home';
+const TABS = ['home', 'apps', 'term'];
+let curTab = TABS.includes(localStorage.getItem('tab')) ? localStorage.getItem('tab') : 'home';
 
 function setTab(tab) {
   curTab = tab;
   try { localStorage.setItem('tab', tab); } catch (_) { /* ignore */ }
   for (const b of document.querySelectorAll('.tab')) b.classList.toggle('active', b.dataset.tab === tab);
   $('#home').classList.toggle('hidden', tab !== 'home');
+  $('#apps').classList.toggle('hidden', tab !== 'apps');
   $('#layout-wrap').classList.toggle('hidden', tab !== 'term');
   if (tab === 'home') window.GraphView.show(); else window.GraphView.hide();
   relayout();
@@ -254,7 +256,8 @@ class Pane {
 
   updateHead() {
     const st = normStatus(this.info.status);
-    this.titleEl.textContent = this.info.name;
+    const app = this.info.appId && window.AppsView ? window.AppsView.get(this.info.appId) : null;
+    this.titleEl.textContent = app && app.icon ? `${app.icon}  ${this.info.name}` : this.info.name;
     this.cwdEl.textContent = `${this.info.cwd}  ·  ${this.info.command}`;
     this.cwdEl.title = this.cwdEl.textContent;
     this.stateEl.textContent = STATUS_LABEL[st];
@@ -313,9 +316,9 @@ class Pane {
     b.className = 'exit-banner';
     b.innerHTML = `<span>プロセスが終了しました (code ${esc(code ?? '?')})</span><button class="btn">同じ設定で再起動</button>`;
     b.querySelector('button').addEventListener('click', async () => {
-      const { name, cwd, command } = this.info;
+      const { name, cwd, command, appId } = this.info;
       await closeSession(this.id, { silent: true });
-      try { await addSession({ name, cwd, command }); } catch (e) { alert(e.message); }
+      try { await addSession({ name, cwd, command, appId }); } catch (e) { alert(e.message); }
     });
     this.wrap.appendChild(b);
     this.exitBanner = b;
@@ -536,8 +539,8 @@ function removePane(id) {
   renderSummary();
 }
 
-async function addSession({ name, cwd, command }) {
-  const info = await api('POST', '/api/sessions', { name, cwd, command });
+async function addSession({ name, cwd, command, appId }) {
+  const info = await api('POST', '/api/sessions', { name, cwd, command, appId });
   if (!panes.has(info.id)) onSession(info); // SSE より先に応答が届いた場合に備える
   setFocus(info.id);
   return panes.get(info.id);
@@ -552,23 +555,59 @@ async function closeSession(id, { silent = false } = {}) {
 }
 
 // ---------- ダイアログ ----------
-async function openDialog(prefill) {
+// prefill: { cwd } (グラフから) / { name, command, appId } (コマンドアプリから)
+async function openDialog(prefill = {}) {
   const defaults = await api('GET', '/api/defaults').catch(() => ({ command: 'claude', cwd: '' }));
-  const pre = prefill && typeof prefill.cwd === 'string' ? prefill : null;
-  $('#f-name').value = pre ? baseName(pre.cwd) : '';
-  $('#f-cwd').value = pre ? pre.cwd : (localStorage.getItem('lastCwd') || defaults.cwd || '');
-  $('#f-cmd').value = localStorage.getItem('lastCmd') || defaults.command || 'claude';
+  const hasCwd = typeof prefill.cwd === 'string' && prefill.cwd;
+  const appSel = $('#f-app');
+  const cmdApps = window.AppsView ? window.AppsView.commandApps() : [];
+  appSel.innerHTML = '<option value="">(コマンドを直接入力)</option>' +
+    cmdApps.map((a) => `<option value="${esc(a.id)}">${esc(`${a.icon ? `${a.icon}  ` : ''}${a.name} — ${a.command}`)}</option>`).join('');
+  const lastApp = cmdApps.find((a) => a.id === localStorage.getItem('lastApp'));
+  const app = prefill.appId ? cmdApps.find((a) => a.id === prefill.appId) : (prefill.command ? null : lastApp);
+  appSel.value = app ? app.id : '';
+  $('#f-name').value = prefill.name || (hasCwd ? baseName(prefill.cwd) : '');
+  $('#f-cwd').value = hasCwd ? prefill.cwd : ((app && app.cwd) || localStorage.getItem('lastCwd') || defaults.cwd || '');
+  $('#f-cmd').value = prefill.command || (app && app.command) || localStorage.getItem('lastCmd') || defaults.command || 'claude';
   $('#dlg-error').classList.add('hidden');
   dlg.showModal();
-  $('#f-name').focus();
+  (hasCwd || prefill.appId ? $('#f-cwd') : $('#f-name')).focus();
+}
+
+$('#f-app').addEventListener('change', (e) => {
+  const a = window.AppsView && window.AppsView.get(e.target.value);
+  if (!a) return;
+  // 名前が空か、別アプリの名前のままなら、選んだアプリの名前に合わせる
+  const nm = $('#f-name').value.trim();
+  if (!nm || window.AppsView.commandApps().some((x) => x.name === nm)) $('#f-name').value = a.name;
+  $('#f-cmd').value = a.command;
+  if (a.cwd) $('#f-cwd').value = a.cwd;
+});
+// コマンドを手で書き換えたら、アプリの選択は外す
+$('#f-cmd').addEventListener('input', () => {
+  const a = window.AppsView && window.AppsView.get($('#f-app').value);
+  if (a && a.command !== $('#f-cmd').value.trim()) $('#f-app').value = '';
+});
+
+// コマンドアプリの起動: 作業ディレクトリが決まっていればそのまま、未設定ならダイアログで選ぶ
+async function launchCommandApp(a) {
+  if (!a.cwd) { openDialog({ name: a.name, command: a.command, appId: a.id }); return; }
+  try {
+    await addSession({ name: a.name, cwd: a.cwd, command: a.command, appId: a.id });
+    setTab('term');
+  } catch (e) {
+    alert(e.message);
+  }
 }
 
 $('#dlg-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const cwd = $('#f-cwd').value.trim();
   const command = $('#f-cmd').value.trim();
+  const appId = $('#f-app').value || undefined;
   try {
-    await addSession({ name: $('#f-name').value.trim(), cwd, command });
+    await addSession({ name: $('#f-name').value.trim(), cwd, command, appId });
+    localStorage.setItem('lastApp', appId || '');
     localStorage.setItem('lastCwd', cwd);
     localStorage.setItem('lastCmd', command);
     dlg.close();
@@ -646,6 +685,10 @@ function connectEvents() {
     onLaunch: (cwd) => openDialog({ cwd }),
     mascotURL: mascotImageURL,
     mascotSVG: mascot,
+  });
+  await window.AppsView.init({
+    showTab: () => setTab('apps'),
+    onLaunchCommand: launchCommandApp,
   });
   await resync();
   const first = [...panes.keys()][0];

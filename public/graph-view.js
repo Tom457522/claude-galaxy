@@ -131,6 +131,7 @@
     return texCache.get(k);
   }
   const labelWanted = (n) => S.f.labels && (n.kind === 'session' || n.kind === 'hub' || n.kind === 'root' || S.nodes.length <= 220 || n.depth <= 1);
+  const STATUS_COLORS = { starting: '#d97757', idle: '#d97757', working: '#f08a5d', waiting: '#e5b567', done: '#8fbf7f', error: '#e5484d', exited: '#5b534c' };
 
   function makeLabel(text, h, color) {
     const t = new SpriteText(text, h, color);
@@ -142,13 +143,50 @@
     return t;
   }
 
+  // 発光(放射グラデーションのスプライトを加算合成で重ねる)
+  let glowTex = null;
+  function glowTexture() {
+    if (glowTex) return glowTex;
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const ctx = c.getContext('2d');
+    const gr = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    gr.addColorStop(0, 'rgba(255,255,255,1)');
+    gr.addColorStop(0.18, 'rgba(255,255,255,0.55)');
+    gr.addColorStop(0.45, 'rgba(255,255,255,0.14)');
+    gr.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gr;
+    ctx.fillRect(0, 0, 128, 128);
+    glowTex = new THREE.CanvasTexture(c);
+    glowTex.colorSpace = THREE.SRGBColorSpace;
+    return glowTex;
+  }
+  function makeGlow(color, size, opacity) {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTexture(), color, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending,
+    }));
+    sp.scale.set(size, size, 1);
+    sp.__base = { size, opacity };
+    return sp;
+  }
+  function makeRing(radius, tube, color, opacity) {
+    const m = new THREE.Mesh(new THREE.TorusGeometry(radius, tube, 6, 96),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending }));
+    return m;
+  }
+
   function nodeObject(n) {
     const g = new THREE.Group();
     n.__r = radiusOf(n);
     n.__label = null;
     n.__mat = null;
     n.__sprite = null;
+    n.__glow = null;
+    n.__spin = null;
     if (n.kind === 'session') {
+      const glow = makeGlow(STATUS_COLORS[n.status] || STATUS_COLORS.idle, 28, 0.35);
+      g.add(glow);
+      n.__glow = glow;
       const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: statusTexture(n.status), transparent: true, depthWrite: false }));
       sp.scale.set(13, 14, 1);
       g.add(sp);
@@ -161,21 +199,170 @@
       return g;
     }
     const col = colorOf(n);
-    const mat = new THREE.MeshLambertMaterial({ color: col, transparent: true, opacity: 1, emissive: col, emissiveIntensity: 0.12 });
-    g.add(new THREE.Mesh(geoFor(n.__r), mat));
+    const mat = new THREE.MeshLambertMaterial({ color: col, transparent: true, opacity: 1, emissive: col, emissiveIntensity: 0.22 });
+    const big = n.kind === 'hub' || n.kind === 'root';
+    // 本体は小さめの光点にして、周囲の発光で大きさを見せる
+    g.add(new THREE.Mesh(geoFor(n.__r * (big ? 0.62 : 0.5)), mat));
     n.__mat = mat;
-    if (n.kind === 'hub' || n.kind === 'root') {
-      g.add(new THREE.Mesh(geoFor(n.__r * 1.7), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.1, depthWrite: false })));
+    const glow = makeGlow(col, n.__r * (big ? 6.5 : 5.5), big ? 0.38 : 0.3);
+    g.add(glow);
+    n.__glow = glow;
+    if (big) {
+      // 周回リング(ハブは 2 本、ルートは 1 本)
+      const rings = [];
+      const r1 = makeRing(n.__r * 1.25, n.kind === 'hub' ? 0.14 : 0.1, col, 0.6);
+      r1.rotation.x = Math.PI / 2.4;
+      rings.push(r1);
+      if (n.kind === 'hub') {
+        const r2 = makeRing(n.__r * 1.7, 0.08, '#f2c94c', 0.4);
+        r2.rotation.x = -Math.PI / 3;
+        r2.rotation.y = Math.PI / 5;
+        rings.push(r2);
+      }
+      rings.forEach((r) => g.add(r));
+      n.__spin = rings;
     }
     if (labelWanted(n)) {
       const h = n.kind === 'hub' ? 7 : n.kind === 'root' ? 5 : n.depth <= 1 ? 4 : 3.2;
-      const l = makeLabel(n.name, h, n.kind === 'folder' ? '#d8d0c7' : '#ffd9c4');
-      l.position.y = n.__r + h * 0.7 + 1.5;
+      const l = makeLabel(n.kind === 'hub' ? 'HOME' : n.name, h, n.kind === 'folder' ? '#bdb3a9' : '#e8b8a0');
+      l.position.y = n.__r * (big ? 1.8 : 0.6) + h * 0.7 + 1.5;
       g.add(l);
       n.__label = l;
     }
     return g;
   }
+
+  // ---- 背景演出(星空 / ジオデシック球 / HUD リング / 中心の星雲) ----
+  const decor = { group: null, shell: null, ring: null, ring2: null, nebula: null, stars: null, center: [0, 0, 0], radius: 120, cur: { r: 120, c: [0, 0, 0] } };
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const gauss = () => { let u = 0; let v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  function pointsOf(positions, colors, size, opacity) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    return new THREE.Points(geo, new THREE.PointsMaterial({
+      size, vertexColors: true, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending, map: glowTexture(), sizeAttenuation: true,
+    }));
+  }
+  function buildDecor(scene) {
+    const root = new THREE.Group();
+    decor.group = root;
+
+    // 星空(カメラから十分遠い球殻に散らす)
+    const sp = []; const sc = [];
+    const tints = [[1, 0.95, 0.9], [1, 0.72, 0.55], [0.75, 0.7, 1], [0.6, 0.9, 0.9]];
+    for (let i = 0; i < 2600; i++) {
+      const y = rand(-1, 1); const th = rand(0, Math.PI * 2); const r = Math.sqrt(1 - y * y); const d = rand(1400, 3200);
+      sp.push(Math.cos(th) * r * d, y * d, Math.sin(th) * r * d);
+      const t = tints[Math.random() < 0.7 ? 0 : 1 + Math.floor(Math.random() * 3)]; const b = rand(0.25, 0.9);
+      sc.push(t[0] * b, t[1] * b, t[2] * b);
+    }
+    decor.stars = pointsOf(sp, sc, 16, 0.9);
+    scene.add(decor.stars);
+
+    // ジオデシック球(辺 + 頂点)
+    const ico = new THREE.IcosahedronGeometry(1, 2);
+    const shell = new THREE.Group();
+    shell.add(new THREE.LineSegments(new THREE.EdgesGeometry(ico, 1),
+      new THREE.LineBasicMaterial({ color: '#6a5446', transparent: true, opacity: 0.3, depthWrite: false })));
+    const vp = ico.getAttribute('position').array;
+    shell.add(pointsOf(Array.from(vp), Array.from(vp, () => 0.6), 2.2, 0.8));
+    decor.shell = shell;
+    root.add(shell);
+
+    // HUD リング(目盛り付き)と点線リング
+    const ring = new THREE.Group();
+    const circ = [];
+    for (let i = 0; i < 256; i++) { const a = (i / 256) * Math.PI * 2; circ.push(Math.cos(a), 0, Math.sin(a)); }
+    const cg = new THREE.BufferGeometry();
+    cg.setAttribute('position', new THREE.Float32BufferAttribute(circ, 3));
+    ring.add(new THREE.LineLoop(cg, new THREE.LineBasicMaterial({ color: '#d97757', transparent: true, opacity: 0.35, depthWrite: false })));
+    const ticks = [];
+    for (let i = 0; i < 120; i++) {
+      const a = (i / 120) * Math.PI * 2; const len = i % 10 === 0 ? 0.05 : 0.018;
+      ticks.push(Math.cos(a), 0, Math.sin(a), Math.cos(a) * (1 + len), 0, Math.sin(a) * (1 + len));
+    }
+    const tg = new THREE.BufferGeometry();
+    tg.setAttribute('position', new THREE.Float32BufferAttribute(ticks, 3));
+    ring.add(new THREE.LineSegments(tg, new THREE.LineBasicMaterial({ color: '#f08a5d', transparent: true, opacity: 0.5, depthWrite: false })));
+    decor.ring = ring;
+    root.add(ring);
+    const dots = []; const dc = [];
+    for (let i = 0; i < 180; i++) { const a = (i / 180) * Math.PI * 2; dots.push(Math.cos(a), 0, Math.sin(a)); dc.push(0.85, 0.47, 0.34); }
+    decor.ring2 = pointsOf(dots, dc, 2.4, 0.8);
+    decor.ring2.rotation.x = 0.35;
+    root.add(decor.ring2);
+
+    // 中心の星雲(色はカテゴリの配色から)
+    const np = []; const nc = [];
+    const pal = ['#f08a5d', '#d97757', '#9b8cf0', '#5fd0d0', '#f2c94c', '#e060a8', '#8fbf7f'].map((h) => new THREE.Color(h));
+    for (let i = 0; i < 1800; i++) {
+      const k = Math.floor(Math.random() * pal.length);
+      const off = [Math.cos(k * 0.9) * 0.35, Math.sin(k * 1.7) * 0.25, Math.sin(k * 0.9) * 0.35];
+      np.push((gauss() * 0.42 + off[0]), (gauss() * 0.34 + off[1]), (gauss() * 0.42 + off[2]));
+      const b = rand(0.35, 1);
+      nc.push(pal[k].r * b, pal[k].g * b, pal[k].b * b);
+    }
+    decor.nebula = pointsOf(np, nc, 2.6, 0.6);
+    root.add(decor.nebula);
+
+    scene.add(root);
+  }
+  function measureGraph() {
+    const pts = S.nodes.filter((n) => n.x != null && n.kind !== 'session');
+    if (!pts.length) return;
+    const c = [0, 0, 0];
+    for (const n of pts) { c[0] += n.x; c[1] += n.y; c[2] += n.z; }
+    c.forEach((v, i) => { c[i] = v / pts.length; });
+    const d = pts.map((n) => Math.hypot(n.x - c[0], n.y - c[1], n.z - c[2])).sort((a, b) => a - b);
+    decor.center = c;
+    decor.radius = Math.max(70, d[Math.floor(d.length * 0.92)] || 0);
+  }
+  function animateDecor(t) {
+    if (!decor.group) return;
+    const k = 0.04;
+    decor.cur.r += (decor.radius - decor.cur.r) * k;
+    decor.cur.c = decor.cur.c.map((v, i) => v + (decor.center[i] - v) * k);
+    const R = decor.cur.r;
+    decor.group.position.set(...decor.cur.c);
+    decor.shell.scale.setScalar(R * 1.35);
+    decor.shell.rotation.y = t * 0.00004;
+    decor.shell.rotation.x = Math.sin(t * 0.00002) * 0.2;
+    decor.ring.scale.setScalar(R * 1.7);
+    decor.ring.rotation.y = -t * 0.00006;
+    decor.ring.rotation.x = 0.18 + Math.sin(t * 0.00015) * 0.04;
+    decor.ring2.scale.setScalar(R * 1.55);
+    decor.ring2.rotation.y = t * 0.00009;
+    const nr = Math.max(18, R * 0.22);
+    decor.nebula.scale.setScalar(nr);
+    decor.nebula.rotation.y = t * 0.00012;
+    decor.stars.rotation.y = t * 0.000008;
+  }
+  function animateNodes(t) {
+    for (const n of S.nodes) {
+      if (n.__spin) n.__spin.forEach((r, i) => { r.rotation.z = t * (i ? -0.0005 : 0.0007); });
+      const gl = n.__glow;
+      if (!gl) continue;
+      let s = gl.__base.size;
+      if (n.kind === 'hub') s *= 1 + Math.sin(t * 0.002) * 0.08;
+      if (n.kind === 'session' && (n.status === 'working' || n.status === 'waiting')) {
+        s *= 1 + Math.sin(t * (n.status === 'waiting' ? 0.006 : 0.004)) * 0.18;
+      }
+      if (S.hover === n) s *= 1.45;
+      gl.scale.set(s, s, 1);
+    }
+  }
+  let rafId = 0;
+  let lastMeasure = 0;
+  function tick(t) {
+    rafId = 0;
+    if (!S.visible) return;
+    if (t - lastMeasure > 800) { lastMeasure = t; measureGraph(); }
+    animateDecor(t);
+    animateNodes(t);
+    rafId = requestAnimationFrame(tick);
+  }
+  const startLoop = () => { if (!rafId) rafId = requestAnimationFrame(tick); };
 
   // ---- 初期配置(半径方向に広げる木構造レイアウト。これを力学シミュレーションで仕上げる) ----
   function layoutRadial(objs) {
@@ -370,7 +557,7 @@
     S.graph.d3ReheatSimulation();
     if (layout) {
       S.fitPending = true;
-      setTimeout(() => { if (S.visible) S.graph.zoomToFit(700, 120); }, 700);
+      setTimeout(() => { if (S.visible) fitView(700); }, 700);
     }
     renderCrumbs();
     renderStats();
@@ -470,9 +657,10 @@
     const sess = S.nodes.filter((n) => n.kind === 'session').length;
     const files = S.nodes.filter((n) => n.kind === 'root').reduce((a, n) => a + n.totalFiles, 0)
       || (S.mode === 'focus' ? (S.nodes.find((n) => n.kind === 'root') || {}).totalFiles || 0 : 0);
-    $('#g-stats').textContent =
-      `フォルダ ${fmt(folders)} ・ ファイル ${fmt(files)} ・ 依存 ${fmt(imports)} ・ セッション ${fmt(sess)}` +
-      (S.raw && S.raw.took != null ? ` ・ 走査 ${S.raw.took}ms` : '');
+    const tile = (v, l, cls = '') => `<div class="g-stat ${cls}"><b>${fmt(v)}</b><span>${l}</span></div>`;
+    $('#g-stats').innerHTML =
+      tile(folders, 'FOLDERS') + tile(files, 'FILES') + tile(imports, 'DEPS') + tile(sess, 'SESSIONS', 'hot') +
+      (S.raw && S.raw.took != null ? `<div class="g-stat-note">SCAN ${S.raw.took}ms</div>` : '');
     const msgs = [];
     if (S.raw && S.raw.truncated) msgs.push('上限に達したため一部のみ表示しています。深さを下げるか、フォルダを選んで絞り込んでください。');
     if (S.raw && S.raw.errors && S.raw.errors.length) msgs.push(S.raw.errors.map((e) => `${e.path}: ${e.error}`).join(' / '));
@@ -540,8 +728,9 @@
       if (hl && !hl.has(n.id)) a = Math.min(a, 0.18);
       if (n.__mat) {
         n.__mat.opacity = a;
-        n.__mat.emissiveIntensity = q && n.__match ? 0.9 : (hl && hl.has(n.id) && S.hover === n ? 0.6 : 0.12);
+        n.__mat.emissiveIntensity = q && n.__match ? 0.9 : (hl && hl.has(n.id) && S.hover === n ? 0.7 : 0.22);
       }
+      if (n.__glow) n.__glow.material.opacity = n.__glow.__base.opacity * (a < 1 ? a * 0.6 : (q && n.__match ? 1.6 : 1));
       if (n.__sprite) n.__sprite.material.opacity = a;
       if (n.__label) n.__label.material.opacity = a;
     }
@@ -559,9 +748,16 @@
     switch (l.type) {
       case 'import': return lit ? '#ffb27a' : 'rgba(240,138,93,0.85)';
       case 'session': return lit ? '#b5e0a5' : 'rgba(143,191,127,0.8)';
-      case 'root': return 'rgba(217,119,87,0.55)';
-      default: return lit ? 'rgba(235,220,205,0.75)' : 'rgba(150,138,126,0.4)';
+      case 'root': return lit ? '#f08a5d' : 'rgba(217,119,87,0.6)';
+      default: return lit ? 'rgba(255,214,190,0.85)' : 'rgba(190,150,125,0.38)';
     }
+  }
+  // 流れる光の粒(大きいグラフでは親子リンクには付けない)
+  function linkParticles(l) {
+    if (l.type === 'import') return Math.min(3, 1 + Math.floor(Math.log2(l.weight || 1)));
+    if (l.type === 'session') return 2;
+    if (l.type === 'root') return 2;
+    return S.links.length <= 400 ? 1 : 0;
   }
   function linkWidth(l) {
     if (l.type === 'import') return 0.5 + Math.log2(1 + (l.weight || 1)) * 0.4;
@@ -576,6 +772,25 @@
     if (S.host) S.host.style.cursor = node ? 'pointer' : '';
     if (node) renderCard(node);
     restyle();
+  }
+
+  // 全体表示(ノードの座標から外接球を求めて、今の向きのまま引く。getGraphBbox は描画前だと原点に集まって見えるため使わない)
+  function fitView(ms = 700) {
+    const pts = S.nodes.filter((n) => n.x != null);
+    if (!pts.length || !S.graph) return;
+    const c = [0, 0, 0];
+    for (const n of pts) { c[0] += n.x; c[1] += n.y; c[2] += n.z; }
+    c.forEach((v, i) => { c[i] = v / pts.length; });
+    const R = Math.max(40, ...pts.map((n) => Math.hypot(n.x - c[0], n.y - c[1], n.z - c[2]) + (n.__r || 4) * 2));
+    const cam = S.graph.camera();
+    const half = (cam.fov * Math.PI) / 360;
+    const fit = Math.min(half, Math.atan(Math.tan(half) * cam.aspect));
+    const dist = (R / Math.sin(fit)) * 1.08;
+    const t = S.graph.controls().target;
+    let d = [cam.position.x - t.x, cam.position.y - t.y, cam.position.z - t.z];
+    const l = Math.hypot(...d);
+    d = l > 1e-3 ? d.map((v) => v / l) : [0.2, 0.3, 0.93];
+    S.graph.cameraPosition({ x: c[0] + d[0] * dist, y: c[1] + d[1] * dist, z: c[2] + d[2] * dist }, { x: c[0], y: c[1], z: c[2] }, ms);
   }
 
   function flyTo(node) {
@@ -599,6 +814,7 @@
       if (s.status !== n.status) {
         n.status = s.status;
         if (n.__sprite) n.__sprite.material.map = statusTexture(s.status);
+        if (n.__glow) n.__glow.material.color.set(STATUS_COLORS[s.status] || STATUS_COLORS.idle);
         changed = true;
       }
       n.name = s.name;
@@ -680,7 +896,7 @@
     $('#g-color').addEventListener('change', (e) => { S.f.color = e.target.value; persist(); rebuild({ layout: false }); });
 
     $('#g-relayout').addEventListener('click', () => { rebuild({ layout: true }); });
-    $('#g-fit').addEventListener('click', () => S.graph.zoomToFit(600, 60));
+    $('#g-fit').addEventListener('click', () => fitView(600));
     $('#g-roots').addEventListener('click', openRootsDialog);
     $('#g-empty-btn').addEventListener('click', openRootsDialog);
 
@@ -753,8 +969,8 @@
 
   function createGraph() {
     S.host = $('#graph3d');
-    const g = ForceGraph3D({ rendererConfig: { alpha: true, antialias: true } })(S.host)
-      .backgroundColor('rgba(0,0,0,0)')
+    const g = ForceGraph3D({ rendererConfig: { antialias: true, powerPreference: 'high-performance' } })(S.host)
+      .backgroundColor('#060505')
       .showNavInfo(false)
       .nodeThreeObject(nodeObject)
       .nodeLabel((n) => {
@@ -767,9 +983,10 @@
       .linkOpacity(1)
       .linkDirectionalArrowLength((l) => (l.type === 'import' ? 3.4 : 0))
       .linkDirectionalArrowRelPos(0.93)
-      .linkDirectionalParticles((l) => (l.type === 'import' ? Math.min(3, 1 + Math.floor(Math.log2(l.weight || 1))) : 0))
-      .linkDirectionalParticleWidth(1.3)
-      .linkDirectionalParticleSpeed(0.007)
+      .linkDirectionalParticles(linkParticles)
+      .linkDirectionalParticleWidth((l) => (l.type === 'import' ? 1.3 : l.type === 'session' ? 1.1 : 0.7))
+      .linkDirectionalParticleSpeed((l) => (l.type === 'contains' ? 0.0035 : 0.007))
+      .linkDirectionalParticleColor((l) => (l.type === 'session' ? '#b5e0a5' : l.type === 'import' ? '#ffb27a' : '#f2a27a'))
       .linkCurvature((l) => (l.type === 'import' ? 0.24 : 0))
       .linkCurveRotation((l) => (l.__rot ?? (l.__rot = Math.random() * Math.PI * 2)))
       .enableNodeDrag(true)
@@ -788,7 +1005,7 @@
         if (S.cardNode === n) renderCard(n);
       })
       .onBackgroundClick(() => { /* 何もしない(カードは最後に触れたノードのまま残す) */ })
-      .onEngineStop(() => { if (S.fitPending) { S.fitPending = false; if (S.visible) g.zoomToFit(700, 120); } });
+      .onEngineStop(() => { if (S.fitPending) { S.fitPending = false; if (S.visible) fitView(900); } });
     S.graph = g;
 
     // 力学シミュレーション(初期の放射状配置を崩さず、重なりを避けて仕上げる)
@@ -802,6 +1019,11 @@
       .strength((l) => (l.type === 'import' ? 0.012 : l.type === 'session' ? 0.9 : l.type === 'root' ? 0.6 : 0.75));
     g.d3Force('charge').strength((n) => (n.kind === 'hub' ? -260 : n.kind === 'session' ? -30 : -45)).distanceMax(320);
     g.d3Force('collide', d3f.forceCollide((n) => (n.__r || radiusOf(n)) + 2.5).iterations(2));
+
+    // 発光(ブルーム)と背景演出
+    const bloom = new THREE.UnrealBloomPass(new THREE.Vector2(S.host.clientWidth || 800, S.host.clientHeight || 600), 0.75, 0.5, 0.62);
+    g.postProcessingComposer().addPass(bloom);
+    buildDecor(g.scene());
     applyLinkVisibility();
     resize();
     new ResizeObserver(() => resize()).observe(S.host);
@@ -825,10 +1047,23 @@
     } catch (_) { /* ignore */ }
     if (!S.roots.length && S.suggested.length) { /* 初回は設定を促す(自動では広い範囲を走査しない) */ }
   }
+  // HUD の時計
+  function tickClock() {
+    const el = $('#g-clock');
+    if (!el || !S.visible) return;
+    const d = new Date();
+    const pad = (x) => String(x).padStart(2, '0');
+    const w = ['日', '月', '火', '水', '木', '金', '土'][d.getDay()];
+    el.innerHTML = `<span>${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())} (${w})</span><b>${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}</b>`;
+  }
+  setInterval(tickClock, 1000);
+
   function show() {
+    tickClock();
     S.visible = true;
     resize();
     S.graph.resumeAnimation();
+    startLoop();
     if (!S.loadedOnce) { S.loadedOnce = true; load({ layout: true }); }
   }
   function hide() {

@@ -12,6 +12,7 @@
     <div class="brand">Claude Multi Term</div>
     <nav class="tabs">
       <button class="tab active" data-tab="home">ホーム</button>
+      <button class="tab" data-tab="apps">アプリ</button>
       <button class="tab" data-tab="term">ターミナル <span id="tab-badge" class="tab-badge"></span></button>
     </nav>
     <button id="btn-new" class="btn primary">＋ 新規セッション</button>
@@ -40,6 +41,12 @@
       <!-- ホーム: フォルダ構造の 3D グラフ -->
       <section id="home" class="home">
         <div id="graph3d" class="graph3d"></div>
+        <div class="g-vignette"></div>
+        <div class="g-frame"><i></i><i></i><i></i><i></i></div>
+        <div class="g-title">
+          <div class="g-title-main"><span class="g-logo">⬡</span> CLAUDE <em>Multi Term</em></div>
+          <div id="g-clock" class="g-clock"></div>
+        </div>
 
         <div class="g-top">
           <div id="g-crumbs" class="g-crumbs"></div>
@@ -103,6 +110,7 @@
           </div>
         </aside>
 
+        <div id="g-apps" class="g-apps"></div>
         <div id="g-card" class="g-card hidden"></div>
         <div class="g-hint">ドラッグ: 回転 / ホイール: ズーム / 右ドラッグ: 移動 / ノードをつかんで動かせます / フォルダをクリックで絞り込み / Esc: 1つ上へ</div>
 
@@ -114,6 +122,35 @@
           </div>
         </div>
         <div id="g-loading" class="g-loading hidden">読み込み中…</div>
+      </section>
+
+      <!-- アプリ: ランチャーと、開いている Web アプリ -->
+      <section id="apps" class="apps hidden">
+        <div class="apps-bar">
+          <button class="apps-tab cur" data-open="launcher"><span class="ai">◈</span>ランチャー</button>
+          <div id="apps-tabs" class="apps-tabs"></div>
+          <div class="spacer"></div>
+          <button id="apps-reload" class="btn hidden" title="再読み込み">⟳</button>
+          <button id="apps-ext" class="btn hidden" title="このアプリを別ウィンドウで開く">↗ 別ウィンドウ</button>
+        </div>
+        <div id="apps-launcher" class="apps-launcher">
+          <div class="apps-head">
+            <div>
+              <h2><span>◈</span> MICRO APPS</h2>
+              <p>よく使う Web アプリやコマンドを登録すると、ここ・ホーム・新規セッションからすぐ起動できます。</p>
+            </div>
+            <button id="apps-add" class="btn primary">＋ アプリを追加</button>
+          </div>
+          <div class="apps-sec">
+            <div class="apps-lbl">WEB APPS <small>アプリ内のタブで開く</small></div>
+            <div id="apps-web" class="apps-grid"></div>
+          </div>
+          <div class="apps-sec">
+            <div class="apps-lbl">COMMANDS <small>ターミナルのセッションとして起動</small></div>
+            <div id="apps-cmd" class="apps-grid"></div>
+          </div>
+        </div>
+        <div id="apps-frames" class="apps-frames hidden"></div>
       </section>
 
       <main id="grid" class="grid hidden" data-cols="auto"></main>
@@ -132,6 +169,9 @@
       </label>
       <label>作業ディレクトリ
         <input id="f-cwd" type="text" placeholder="C:\Users\you\projects\my-app" autocomplete="off">
+      </label>
+      <label>アプリ
+        <select id="f-app"></select>
       </label>
       <label>起動コマンド
         <input id="f-cmd" type="text" placeholder="claude" autocomplete="off">
@@ -162,11 +202,58 @@
     </form>
   </dialog>
 
+  <dialog id="dlg-app">
+    <form method="dialog" id="app-form">
+      <h2 id="app-title">アプリを追加</h2>
+      <div class="app-types">
+        <label class="app-type"><input type="radio" name="app-type" value="web" checked><b>Web アプリ</b><small>URL / ローカルの HTML をタブで開く</small></label>
+        <label class="app-type"><input type="radio" name="app-type" value="command"><b>コマンド</b><small>CLI をターミナルで起動</small></label>
+      </div>
+      <div class="app-row">
+        <label class="app-icon-l">アイコン
+          <input id="app-icon" type="text" maxlength="4" placeholder="◰" autocomplete="off">
+        </label>
+        <label class="app-name-l">名前
+          <input id="app-name" type="text" maxlength="40" placeholder="例: Excalidraw" autocomplete="off">
+        </label>
+      </div>
+      <label>説明(任意)
+        <input id="app-desc" type="text" maxlength="120" autocomplete="off">
+      </label>
+      <div class="app-web">
+        <label>URL またはファイル / フォルダのパス
+          <input id="app-url" type="text" placeholder="https://excalidraw.com  または  C:\Users\you\tools\memo.html" autocomplete="off" spellcheck="false">
+        </label>
+        <p class="g-note">サイトによっては埋め込み表示を禁止しています。その場合は「別ウィンドウ」で開いてください。</p>
+      </div>
+      <div class="app-cmd hidden">
+        <label>起動コマンド
+          <input id="app-command" type="text" placeholder="codex / gemini / npm run dev" autocomplete="off" spellcheck="false">
+        </label>
+        <label>作業ディレクトリ(空なら起動のたびに選ぶ)
+          <input id="app-cwd" type="text" placeholder="C:\Users\you\projects\my-app" autocomplete="off" spellcheck="false">
+        </label>
+      </div>
+      <div class="roots-suggest">
+        <span class="g-lbl">プリセット</span>
+        <div id="app-presets" class="g-cats"></div>
+      </div>
+      <p id="app-error" class="error hidden"></p>
+      <div class="dlg-actions">
+        <button type="button" id="app-delete" class="btn danger hidden">削除</button>
+        <div class="spacer"></div>
+        <button type="button" id="app-cancel" class="btn">キャンセル</button>
+        <button type="submit" class="btn primary">保存</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="/vendor/xterm/lib/xterm.js"></script>
   <script src="/vendor/addon-fit/lib/addon-fit.js"></script>
   <script src="/vendor/addon-web-links/lib/addon-web-links.js"></script>
   <script src="/vendor/graph3d.bundle.js"></script>
   <script src="/graph-view.js"></script>
+  <script src="/apps-view.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
