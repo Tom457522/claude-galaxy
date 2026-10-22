@@ -1,5 +1,5 @@
 {
-  "name": "claude-multi-term",
+  "name": "claude-galaxy",
   "version": "0.1.0",
   "description": "Claude Code CLI を複数並列で管理するローカルホスト用アプリ",
   "main": "server.js",

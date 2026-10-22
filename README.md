@@ -1,4 +1,4 @@
-# Claude Multi Term
+# Claude Galaxy
 
 Claude Code CLI を複数セッション並列でブラウザから管理する、ローカルホスト専用アプリです。
 Windows / macOS / Linux で動作します。
@@ -58,7 +58,7 @@ npm start
 | Web アプリ | URL(`https://...`)、またはローカルの HTML ファイル / フォルダ(フォルダなら `index.html`) | アプリタブ内のタブで開く(複数を同時に開いておけます。「↗ 別ウィンドウ」でブラウザの別タブにも開けます) |
 | コマンド | 起動コマンド(`codex`、`gemini`、`npm run dev` など)と作業ディレクトリ | ターミナルのセッションとして起動。作業ディレクトリが空なら、起動のたびにダイアログで選びます |
 
-- 一覧は `~/.claude-multi-term/apps.json` に保存されます(初回は Claude Code と PowerShell / Shell が入っています)。
+- 一覧は `~/.claude-galaxy/apps.json` に保存されます(初回は Claude Code と PowerShell / Shell が入っています)。
 - 外部サイトの中には埋め込み表示を禁止しているものがあります。表示されない場合は「↗ 別ウィンドウ」で開いてください。
 - ローカルの HTML は、本体とは別のポート(既定は本体のポート + 1 = `3457`。`APPS_PORT` で変更可)から配信します。オリジンが分かれるので、登録した HTML からこのアプリの API(セッションの起動など)は呼べません。
 

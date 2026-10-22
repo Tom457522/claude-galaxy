@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 'use strict';
-// Claude Code の hook から呼ばれ、イベントを Claude Multi Term サーバーへ中継する。
+// Claude Code の hook から呼ばれ、イベントを Claude Galaxy サーバーへ中継する。
 // - stdout には何も出さない(UserPromptSubmit 等では stdout が Claude の文脈に入るため)
 // - 失敗しても常に exit 0(Claude Code の動作を邪魔しない)
 // - 送るのは状態表示に必要な最小限の項目だけ(ファイル内容やコマンド本文は送らない)
 
 const http = require('http');
 
-const sid = process.env.MULTI_TERM_SESSION;
-const port = process.env.MULTI_TERM_PORT;
-const token = process.env.MULTI_TERM_TOKEN;
+const sid = process.env.GALAXY_SESSION;
+const port = process.env.GALAXY_PORT;
+const token = process.env.GALAXY_TOKEN;
 if (!sid || !port || !token) process.exit(0);
 
 let sent = false;
@@ -51,7 +51,7 @@ function send(payload) {
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
-        'X-Multi-Term-Token': token,
+        'X-Galaxy-Token': token,
       },
       timeout: 1500,
     },

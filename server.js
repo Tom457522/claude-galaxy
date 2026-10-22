@@ -43,7 +43,7 @@ const HOOK_EVENTS = [
   'SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification',
   'Stop', 'StopFailure', 'SubagentStart', 'SubagentStop', 'SessionEnd',
 ];
-const SETTINGS_FILE = path.join(os.tmpdir(), 'claude-multi-term', `hooks-${PORT}.json`);
+const SETTINGS_FILE = path.join(os.tmpdir(), 'claude-galaxy', `hooks-${PORT}.json`);
 const fwd = (p) => p.replace(/\\/g, '/'); // bash / PowerShell / cmd のどれでも通るよう / 区切りにする
 
 // このアプリで起動した claude にだけ渡す(--settings)。ユーザーの settings.json は書き換えない。
@@ -305,9 +305,9 @@ function createSession({ name, cwd, command, appId }) {
       ...process.env,
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
-      MULTI_TERM_SESSION: id,
-      MULTI_TERM_PORT: String(PORT),
-      MULTI_TERM_TOKEN: HOOK_TOKEN,
+      GALAXY_SESSION: id,
+      GALAXY_PORT: String(PORT),
+      GALAXY_TOKEN: HOOK_TOKEN,
     },
   });
 
@@ -466,7 +466,7 @@ appsServer.use('/appfiles/:id', (req, res, next) => {
 
 // hook.js からのイベント受信(トークン必須)
 app.post('/api/hook', (req, res) => {
-  const token = req.headers['x-multi-term-token'];
+  const token = req.headers['x-galaxy-token'];
   if (typeof token !== 'string' || token.length !== HOOK_TOKEN.length ||
       !crypto.timingSafeEqual(Buffer.from(token), Buffer.from(HOOK_TOKEN))) {
     return res.status(401).end();
@@ -530,7 +530,7 @@ server.on('upgrade', (req, socket, head) => {
 
 writeHookSettings();
 server.listen(PORT, HOST, () => {
-  console.log(`Claude Multi Term: http://localhost:${PORT}`);
+  console.log(`Claude Galaxy: http://localhost:${PORT}`);
 });
 http.createServer(appsServer).listen(APPS_PORT, HOST)
   .on('error', (e) => console.error(`ローカル Web アプリ用ポート ${APPS_PORT} を開けません(${e.code})。APPS_PORT で変更できます。`));

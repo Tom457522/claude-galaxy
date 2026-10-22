@@ -2,7 +2,7 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "claude-multi-term",
+      "name": "claude-galaxy",
       "runtimeExecutable": "node",
       "runtimeArgs": ["server.js"],
       "port": 3456

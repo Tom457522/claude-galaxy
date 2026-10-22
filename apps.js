@@ -1,5 +1,5 @@
 'use strict';
-// アプリ一覧(ランチャー)の保存と検証。保存先: ~/.claude-multi-term/apps.json
+// アプリ一覧(ランチャー)の保存と検証。保存先: ~/.claude-galaxy/apps.json
 //   type 'web'     : URL(http/https)か、ローカルの HTML ファイル / フォルダ。アプリ内のタブ(iframe)で開く
 //   type 'command' : 起動コマンド。ターミナルのセッションとして起動する
 
@@ -9,7 +9,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
 
-const DATA_DIR = path.join(os.homedir(), '.claude-multi-term');
+const DATA_DIR = path.join(os.homedir(), '.claude-galaxy');
 const FILE = path.join(DATA_DIR, 'apps.json');
 const IS_WIN = process.platform === 'win32';
 

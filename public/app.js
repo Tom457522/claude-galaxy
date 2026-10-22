@@ -15,7 +15,7 @@ const panes = new Map();
 const rows = new Map();
 let focusedId = null;
 
-const TITLE = 'Claude Multi Term';
+const TITLE = 'Claude Galaxy';
 
 const THEME = {
   background: '#0a0a0a',
