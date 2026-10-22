@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claude Multi Term</title>
+  <link rel="stylesheet" href="/vendor/xterm/css/xterm.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Claude Multi Term</div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="home">ホーム</button>
+      <button class="tab" data-tab="term">ターミナル <span id="tab-badge" class="tab-badge"></span></button>
+    </nav>
+    <button id="btn-new" class="btn primary">＋ 新規セッション</button>
+    <div class="spacer"></div>
+    <label id="layout-wrap" class="layout-label hidden">レイアウト
+      <select id="layout">
+        <option value="auto">自動</option>
+        <option value="1">1列</option>
+        <option value="2">2列</option>
+        <option value="3">3列</option>
+      </select>
+    </label>
+  </header>
+
+  <div class="layout">
+    <aside id="sidebar" class="sidebar">
+      <div class="side-head">
+        <button id="btn-side" class="icon-btn" title="サイドバーを開閉">«</button>
+        <span class="side-title">エージェント</span>
+      </div>
+      <div id="side-summary" class="side-summary"></div>
+      <div id="side-list" class="side-list"></div>
+    </aside>
+
+    <div class="content">
+      <!-- ホーム: フォルダ構造の 3D グラフ -->
+      <section id="home" class="home">
+        <div id="graph3d" class="graph3d"></div>
+
+        <div class="g-top">
+          <div id="g-crumbs" class="g-crumbs"></div>
+          <div id="g-stats" class="g-stats"></div>
+          <div id="g-warn" class="g-warn hidden"></div>
+        </div>
+
+        <aside id="g-panel" class="g-panel">
+          <div class="g-panel-head">
+            <span>フィルター</span>
+            <button id="g-panel-toggle" class="icon-btn" title="開閉">»</button>
+          </div>
+          <div class="g-panel-body">
+            <div class="g-sec">
+              <div class="g-lbl">検索</div>
+              <input id="g-search" type="text" placeholder="フォルダ名・パス" autocomplete="off">
+              <label class="g-chk"><input type="checkbox" id="g-search-only"> 一致するものだけ表示</label>
+            </div>
+
+            <div class="g-sec">
+              <div class="g-lbl">リレーション</div>
+              <label class="g-chk"><input type="checkbox" id="g-rel-contains"><i class="sw sw-contains"></i>親子(フォルダ構造)</label>
+              <label class="g-chk"><input type="checkbox" id="g-rel-import"><i class="sw sw-import"></i>依存(import / 相対参照)</label>
+              <label class="g-chk"><input type="checkbox" id="g-rel-session"><i class="sw sw-session"></i>Claude セッション</label>
+            </div>
+
+            <div class="g-sec">
+              <div class="g-lbl">種別(主な言語)</div>
+              <div id="g-cats" class="g-cats"></div>
+            </div>
+
+            <div class="g-sec">
+              <div class="g-lbl">深さ <b id="g-depth-v"></b></div>
+              <input id="g-depth" type="range" min="1" max="6" step="1">
+              <div class="g-lbl">最小ファイル数 <b id="g-minfiles-v"></b></div>
+              <input id="g-minfiles" type="range" min="0" max="50" step="1">
+            </div>
+
+            <div class="g-sec">
+              <label class="g-chk"><input type="checkbox" id="g-only-sessions"> セッションのあるフォルダだけ</label>
+              <label class="g-chk"><input type="checkbox" id="g-hidden"> 隠しフォルダ(.xxx)を含める</label>
+              <label class="g-chk"><input type="checkbox" id="g-ignored"> node_modules 等も含める</label>
+              <label class="g-chk"><input type="checkbox" id="g-labels"> ラベルを表示</label>
+              <label class="g-chk"><input type="checkbox" id="g-pin"> ドラッグした位置に固定</label>
+            </div>
+
+            <div class="g-sec">
+              <div class="g-lbl">色分け</div>
+              <select id="g-color">
+                <option value="cat">主な言語</option>
+                <option value="depth">深さ</option>
+                <option value="size">ファイル数</option>
+              </select>
+            </div>
+
+            <div class="g-sec g-btns">
+              <button id="g-relayout" class="btn" title="固定を解除して、配置を最初から最適化し直します">再配置</button>
+              <button id="g-fit" class="btn" title="全体が見える位置にカメラを移動">全体表示</button>
+              <button id="g-roots" class="btn">ルート設定</button>
+            </div>
+          </div>
+        </aside>
+
+        <div id="g-card" class="g-card hidden"></div>
+        <div class="g-hint">ドラッグ: 回転 / ホイール: ズーム / 右ドラッグ: 移動 / ノードをつかんで動かせます / フォルダをクリックで絞り込み / Esc: 1つ上へ</div>
+
+        <div id="g-empty" class="g-empty hidden">
+          <div class="g-empty-box">
+            <p class="g-empty-title">ルートフォルダを追加してください</p>
+            <p class="g-empty-sub">プロジェクトを置いているフォルダを指定すると、その構造が 3D グラフになります。</p>
+            <button id="g-empty-btn" class="btn primary">ルートフォルダを設定</button>
+          </div>
+        </div>
+        <div id="g-loading" class="g-loading hidden">読み込み中…</div>
+      </section>
+
+      <main id="grid" class="grid hidden" data-cols="auto"></main>
+      <div id="empty" class="empty hidden">
+        <p>セッションがありません</p>
+        <button id="btn-new-empty" class="btn primary">＋ 新規セッション</button>
+      </div>
+    </div>
+  </div>
+
+  <dialog id="dlg">
+    <form method="dialog" id="dlg-form">
+      <h2>新規セッション</h2>
+      <label>名前(任意)
+        <input id="f-name" type="text" placeholder="例: api-refactor" autocomplete="off">
+      </label>
+      <label>作業ディレクトリ
+        <input id="f-cwd" type="text" placeholder="C:\Users\you\projects\my-app" autocomplete="off">
+      </label>
+      <label>起動コマンド
+        <input id="f-cmd" type="text" placeholder="claude" autocomplete="off">
+      </label>
+      <p id="dlg-error" class="error hidden"></p>
+      <div class="dlg-actions">
+        <button type="button" id="dlg-cancel" class="btn">キャンセル</button>
+        <button type="submit" class="btn primary">起動</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-roots">
+    <form method="dialog" id="roots-form">
+      <h2>ルートフォルダ</h2>
+      <label>1行に1フォルダ(グラフの起点になります)
+        <textarea id="roots-text" rows="6" placeholder="C:\Users\you\projects" spellcheck="false"></textarea>
+      </label>
+      <div class="roots-suggest">
+        <span class="g-lbl">候補(クリックで追加)</span>
+        <div id="roots-suggest" class="g-cats"></div>
+      </div>
+      <p id="roots-note" class="g-note">広すぎるフォルダ(ホームフォルダ全体など)は、深さを浅くしてお使いください。</p>
+      <div class="dlg-actions">
+        <button type="button" id="roots-cancel" class="btn">キャンセル</button>
+        <button type="submit" class="btn primary">保存して表示</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/vendor/xterm/lib/xterm.js"></script>
+  <script src="/vendor/addon-fit/lib/addon-fit.js"></script>
+  <script src="/vendor/addon-web-links/lib/addon-web-links.js"></script>
+  <script src="/vendor/graph3d.bundle.js"></script>
+  <script src="/graph-view.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

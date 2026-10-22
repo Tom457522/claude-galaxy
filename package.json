@@ -1,0 +1,18 @@
+{
+  "name": "claude-multi-term",
+  "version": "0.1.0",
+  "description": "Claude Code CLI を複数並列で管理するローカルホスト用アプリ",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "express": "^5.3.0",
+    "node-pty": "^1.1.0",
+    "ws": "^8.22.0"
+  }
+}
