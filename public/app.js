@@ -145,7 +145,7 @@ function mascotImageURL(status) {
 }
 
 // ---------- タブ ----------
-const TABS = ['home', 'apps', 'term'];
+const TABS = ['home', 'apps', 'term', 'jobs', 'board'];
 let curTab = TABS.includes(localStorage.getItem('tab')) ? localStorage.getItem('tab') : 'home';
 
 function setTab(tab) {
@@ -154,8 +154,11 @@ function setTab(tab) {
   for (const b of document.querySelectorAll('.tab')) b.classList.toggle('active', b.dataset.tab === tab);
   $('#home').classList.toggle('hidden', tab !== 'home');
   $('#apps').classList.toggle('hidden', tab !== 'apps');
+  $('#jobs').classList.toggle('hidden', tab !== 'jobs');
+  $('#board').classList.toggle('hidden', tab !== 'board');
   $('#layout-wrap').classList.toggle('hidden', tab !== 'term');
   if (tab === 'home') window.GraphView.show(); else window.GraphView.hide();
+  if (tab === 'board') window.BoardView.show(); else window.BoardView.hide();
   relayout();
 }
 document.querySelector('.tabs').addEventListener('click', (e) => {
@@ -449,7 +452,8 @@ class SideRow {
     this.nameEl.textContent = info.name;
     this.labelEl.textContent = STATUS_LABEL[st];
     const u = info.usage;
-    this.detailEl.textContent = (info.statusDetail ? ` · ${info.statusDetail}` : '') + (usageTokens(u) ? ` · ${fmtCost(u.cost)}` : '');
+    this.detailEl.textContent = (info.statusDetail ? ` · ${info.statusDetail}` : '') + (usageTokens(u) ? ` · ${fmtCost(u.cost)}` : '') +
+      (info.unread ? ` · ✉ ${info.unread}` : '');
     this.el.title = `${info.name} — ${STATUS_LABEL[st]}${info.statusDetail ? ` (${info.statusDetail})` : ''}\n${info.cwd}` +
       (usageTokens(u) ? `\n${usageTip(u)}` : '');
 
@@ -514,6 +518,7 @@ function permTarget(x) {
 
 function permCard(x, { withSession }) {
   const p = panes.get(x.sessionId);
+  const isJob = !p && /^j\d+$/.test(x.sessionId);
   const tool = x.mcpServer ? `${x.tool}` : x.tool;
   const rules = (x.rules || []).map((r) => `${r.tool}${r.rule ? `(${r.rule})` : ''} → ${r.destination}`).join('\n');
   const desc = x.input && x.input.description ? `<div class="perm-desc">${esc(x.input.description)}</div>` : '';
@@ -521,7 +526,7 @@ function permCard(x, { withSession }) {
     '<div class="perm-head">' +
       `<b class="perm-tool">${esc(tool)}</b>` +
       (x.agentType ? `<span class="perm-agent">${esc(x.agentType)}</span>` : '') +
-      (withSession ? `<span class="perm-sess" data-focus="${esc(x.sessionId)}">${esc(p ? p.info.name : x.sessionId)}</span>` : '') +
+      (withSession ? `<span class="perm-sess" data-focus="${esc(x.sessionId)}">${isJob ? '◷ ' : ''}${esc(p ? p.info.name : (x.agentName || x.sessionId))}</span>` : '') +
       `<span class="perm-time" data-exp="${x.expiresAt}"></span>` +
     '</div>' +
     desc +
@@ -530,7 +535,7 @@ function permCard(x, { withSession }) {
       '<button class="btn primary" data-act="allow">許可</button>' +
       (rules ? `<button class="btn" data-act="always" title="次のルールを追加して許可:\n${esc(rules)}">今後も許可</button>` : '') +
       '<button class="btn danger" data-act="deny">拒否</button>' +
-      '<button class="btn" data-act="ask" title="この確認をターミナルの通常のダイアログで答えます">ターミナルで</button>' +
+      (isJob ? '' : '<button class="btn" data-act="ask" title="この確認をターミナルの通常のダイアログで答えます">ターミナルで</button>') +
     '</div></div>';
 }
 
@@ -559,7 +564,12 @@ function tickInbox() {
 
 document.addEventListener('click', async (e) => {
   const sess = e.target.closest('.perm-sess[data-focus]');
-  if (sess) { if (curTab !== 'term') setTab('term'); setFocus(sess.dataset.focus); return; }
+  if (sess) {
+    if (!panes.has(sess.dataset.focus)) { setTab('jobs'); return; } // ジョブの確認
+    if (curTab !== 'term') setTab('term');
+    setFocus(sess.dataset.focus);
+    return;
+  }
   const btn = e.target.closest('.perm [data-act]');
   if (!btn) return;
   const card = btn.closest('.perm');
@@ -624,6 +634,15 @@ function relayout() {
   requestAnimationFrame(() => { for (const p of panes.values()) p.refit(); });
 }
 
+let jobCounts = { running: 0, queued: 0 };
+sideSummary.addEventListener('click', (e) => { if (e.target.closest('.sum-jobs')) setTab('jobs'); });
+
+function setBadge(sel, n) {
+  const b = $(sel);
+  b.textContent = n || '';
+  b.classList.toggle('on', n > 0);
+}
+
 function renderSummary() {
   const infos = [...panes.values()].map((p) => p.info);
   const count = (st) => infos.filter((i) => i.status === st).length;
@@ -636,6 +655,7 @@ function renderSummary() {
     `<span>作業中 <b>${count('working')}</b></span>` +
     `<span class="sum-wait">入力待ち <b>${waiting}</b></span>` +
     `<span>サブエージェント <b>${agents}</b></span>` +
+    (jobCounts.running + jobCounts.queued ? `<span class="sum-jobs" title="ジョブタブを開く">ジョブ <b>${jobCounts.running}</b>${jobCounts.queued ? ` +待ち ${jobCounts.queued}` : ''}</span>` : '') +
     (tokens ? `<span title="保存されているセッションの合計(概算)">コスト <b>${fmtCost(cost)}</b> · ${fmtTok(tokens)} tok</span>` : '');
   if (!infos.length && !sideList.querySelector('.srow')) {
     sideList.innerHTML = '<p class="side-empty">セッションなし</p>';
@@ -822,8 +842,18 @@ function connectEvents() {
   es.addEventListener('removed', (e) => removePane(JSON.parse(e.data).id));
   es.addEventListener('permission', (e) => { const x = JSON.parse(e.data); perms.set(x.id, x); renderInbox(); });
   es.addEventListener('permission-removed', (e) => { if (perms.delete(JSON.parse(e.data).id)) renderInbox(); });
-  es.addEventListener('settings', (e) => { inboxToggle.checked = !!JSON.parse(e.data).permissionInbox; });
-  es.onopen = () => { resync(); resyncPermissions(); }; // 切断→再接続時に取りこぼしを補う
+  es.addEventListener('settings', (e) => {
+    const st = JSON.parse(e.data);
+    inboxToggle.checked = !!st.permissionInbox;
+    window.JobsView.onSettings(st);
+    window.BoardView.onSettings(st);
+  });
+  es.addEventListener('job', (e) => window.JobsView.onJob(JSON.parse(e.data)));
+  es.addEventListener('job-removed', (e) => window.JobsView.onJobRemoved(JSON.parse(e.data).id));
+  es.addEventListener('automation', (e) => window.JobsView.onAutomation(JSON.parse(e.data)));
+  es.addEventListener('automation-removed', (e) => window.JobsView.onAutomationRemoved(JSON.parse(e.data).id));
+  es.addEventListener('board', (e) => window.BoardView.onChange(JSON.parse(e.data)));
+  es.onopen = () => { resync(); resyncPermissions(); window.JobsView.resync(); window.BoardView.resync(); }; // 切断→再接続時に取りこぼしを補う
 }
 
 // ---------- 起動 ----------
@@ -839,8 +869,18 @@ function connectEvents() {
     showTab: () => setTab('apps'),
     onLaunchCommand: launchCommandApp,
   });
+  await window.JobsView.init({
+    agentName: (id) => panes.get(id)?.info.name || window.JobsView.get(id)?.name || '',
+    onCounts: (c) => { jobCounts = c; setBadge('#tab-jobs-badge', c.running); renderSummary(); },
+    onOpenSession: (info) => { onSession(info); setTab('term'); setFocus(info.id); },
+  });
+  await window.BoardView.init({ onUnread: (n) => setBadge('#tab-board-badge', n) });
   await resync();
-  api('GET', '/api/settings').then((st) => { inboxToggle.checked = !!st.permissionInbox; }).catch(() => {});
+  api('GET', '/api/settings').then((st) => {
+    inboxToggle.checked = !!st.permissionInbox;
+    window.JobsView.onSettings(st);
+    window.BoardView.onSettings(st);
+  }).catch(() => {});
   const first = [...panes.keys()][0];
   if (first && !focusedId) setFocus(first);
   setTab(curTab);

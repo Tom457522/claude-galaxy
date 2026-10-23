@@ -97,7 +97,7 @@ function closeAll() { for (const id of [...streams.keys()]) closeLog(id); }
 
 // ---- アプリ全体の設定(~/.claude-galaxy/settings.json) ----
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
-const SETTINGS_DEFAULTS = { permissionInbox: true };
+const SETTINGS_DEFAULTS = { permissionInbox: true, busEnabled: true, maxConcurrentJobs: 2 };
 
 function loadSettings() {
   try {
