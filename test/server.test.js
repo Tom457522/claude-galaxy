@@ -29,7 +29,7 @@ async function start() {
   base = `http://127.0.0.1:${port}`;
   server = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
     cwd: ROOT,
-    env: { ...process.env, HOME: home, PORT: String(port), APPS_PORT: String(appsPort), SHELL: '/bin/bash', CLAUDE_CMD: FAKE, GALAXY_PERMISSION_WAIT: '20' },
+    env: { ...process.env, HOME: home, PORT: String(port), APPS_PORT: String(appsPort), SHELL: '/bin/bash', CLAUDE_CMD: FAKE, GALAXY_PERMISSION_WAIT: '20', GALAXY_NO_PLAN: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';

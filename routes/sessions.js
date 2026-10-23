@@ -107,13 +107,19 @@ module.exports = function routes(ctx) {
     if (typeof b.worktreeDir === 'string') {
       try { settings.worktreeDir = b.worktreeDir.trim() ? resolveCwd(b.worktreeDir) : ''; } catch (e) { return res.status(400).json({ error: e.message }); }
     }
-    for (const k of ['budgetDailyUsd', 'budgetJobUsd', 'budgetSessionWarnUsd']) {
+    for (const k of ['budgetDailyUsd', 'budgetJobUsd', 'budgetSessionWarnUsd', 'planMonthlyUsd']) {
       if (b[k] !== undefined) settings[k] = Math.max(0, Math.min(100000, Number(b[k]) || 0));
     }
+    for (const k of ['planLimitSessionPct', 'planLimitWeeklyPct', 'planPaceMargin']) {
+      if (b[k] !== undefined) settings[k] = Math.max(0, Math.min(100, Math.round(Number(b[k]) || 0)));
+    }
+    if (typeof b.planPaceGuard === 'boolean') settings.planPaceGuard = b.planPaceGuard;
+    if (typeof b.budgetIncludeCloud === 'boolean') settings.budgetIncludeCloud = b.budgetIncludeCloud;
     if (typeof b.notifyDesktop === 'boolean') settings.notifyDesktop = b.notifyDesktop;
     if (typeof b.dispatchModel === 'string' && /^[A-Za-z0-9._-]{0,40}$/.test(b.dispatchModel.trim())) settings.dispatchModel = b.dispatchModel.trim();
     jobs.pump();
     ctx.budget.check();
+    ctx.plan.check(); // しきい値が変わったら待ちのジョブを動かす / 止める
     for (const x of sessions.values()) emit(x); // セッションの警告額の表示を更新
     try { store.saveSettings(settings); } catch (e) { return res.status(500).json({ error: e.message }); }
     if (!settings.permissionInbox) for (const x of [...permissions.values()]) resolvePermission(x.id, { behavior: 'ask' });

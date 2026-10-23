@@ -1042,6 +1042,21 @@ function connectEvents() {
       UI.notify('Claude Galaxy: 予算', msg, { tag: 'budget', onClick: () => setTab('settings') });
     }
   });
+  es.addEventListener('cloud', () => window.UsageView.onCloud());
+  es.addEventListener('plan', (e) => {
+    const p = JSON.parse(e.data);
+    window.SettingsView.onPlan(p);
+    window.UsageView.onPlan(p);
+    if (p.level && p.hit) {
+      const l = p.limits.find((x) => x.kind === p.hit);
+      if (!l) return;
+      const msg = p.level === 'over'
+        ? `${l.reason}。新しいジョブを待たせています`
+        : `${l.label}の利用率が ${Math.round(l.percent)}% になりました(ジョブを止めるのは ${l.threshold}%)`;
+      UI.toast(msg, { type: p.level === 'over' ? 'error' : 'warn', timeout: 10000, action: { label: '使用量', fn: () => setTab('usage') } });
+      UI.notify('Claude Galaxy: プランの制限', msg, { tag: `plan-${l.kind}`, onClick: () => setTab('usage') });
+    }
+  });
   es.addEventListener('permission-removed', (e) => { if (perms.delete(JSON.parse(e.data).id)) renderInbox(); });
   es.addEventListener('settings', (e) => {
     const st = JSON.parse(e.data);

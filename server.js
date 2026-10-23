@@ -12,7 +12,7 @@ const pty = require('node-pty');
 const { buildGraph } = require('./graph');
 const appsStore = require('./apps');
 const store = require('./store');
-const { UsageTracker, createUsageScanner } = require('./usage');
+const { UsageTracker, createUsageScanner, costFor } = require('./usage');
 const { createJobManager } = require('./jobs');
 const { createAutomations } = require('./automations');
 const { createBus } = require('./bus');
@@ -23,6 +23,8 @@ const { createTools, claudeMcpServers, claudeExtensions } = require('./tools');
 const dispatch = require('./dispatch');
 const { createAgents } = require('./agents');
 const { createBudget } = require('./budget');
+const { createPlanMonitor } = require('./plan');
+const { createCloudUsage } = require('./cloud');
 const { diagnose } = require('./doctor');
 const { search } = require('./search');
 
@@ -203,10 +205,39 @@ audit.onEntry(() => { // 記録タブに「増えた」とだけ知らせる(ま
   auditTimer = setTimeout(() => { auditTimer = null; broadcast('audit', {}); }, 1000);
 });
 const tools = createTools();
+// クラウドセッション(claude.ai/code など)の使用量。使用量タブと 1 日の予算に混ぜる
+const cloud = createCloudUsage({ onChange: () => { budget.check(); broadcast('cloud', cloud.status()); } });
+const usageScan = createUsageScanner({ extra: () => cloud.messages() });
 const budget = createBudget({
   getSettings: () => settings,
+  getCloud: (day) => cloudCostByDay(day),
   // level: 'warn'(8 割)/ 'over'(上限)に初めて達したとき。画面でデスクトップ通知を出す
   onChange: (st, level) => { broadcast('budget', { ...st, level }); if (level) jobs.pump(); },
+});
+// クラウドの応答をその日(ローカル時刻)の額にまとめる。予算の判定で毎回呼ばれるので、クラウドを読み直したときだけ作り直す
+let cloudDays = null;
+let cloudDaysAt = -1;
+function cloudCostByDay(day) {
+  const at = cloud.status().fetchedAt;
+  if (!cloudDays || cloudDaysAt !== at) {
+    cloudDays = new Map();
+    cloudDaysAt = at;
+    for (const { m } of cloud.messages()) {
+      const d = new Date(m.t);
+      const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      cloudDays.set(k, (cloudDays.get(k) || 0) + (costFor(m) ?? 0));
+    }
+  }
+  return cloudDays.get(day) || 0;
+}
+// プランの実際の利用率(5 時間・週間)。しきい値に達したらジョブを待たせ、下がったら再開する
+const plan = createPlanMonitor({
+  getSettings: () => settings,
+  onChange: (st, level, hit) => {
+    const { history, ...rest } = st; // 推移は画面が /api/plan で読む
+    broadcast('plan', { ...rest, level, hit: hit && hit.kind });
+    jobs.pump();
+  },
 });
 
 // ---- 永続化 ----
@@ -772,7 +803,7 @@ const jobs = createJobManager({
   buildCommand: buildJobCommand,
   envFor: (job) => ({ ...process.env, GALAXY_SESSION: job.id, GALAXY_PORT: String(PORT), GALAXY_TOKEN: tokenFor(job.id) }),
   getMaxConcurrent: () => settings.maxConcurrentJobs,
-  blockReason: () => budget.blockReason(),
+  blockReason: () => budget.blockReason() || plan.blockReason(),
   onChange: (j) => broadcast('job', j),
   onRemove: (id) => broadcast('job-removed', { id }),
   // 起動直前: worktree を指定されていれば作り、その中で動かす
@@ -885,7 +916,7 @@ const ctx = {
   removeMcpConfig, cleanupWorktree, broadcast, sseClients, resolveCwd, isClaudeCommand, assertCommandExists,
   agentName, agentList, resolveAgent, typeInto, busCall, hookAuth, runClaude, buildGraph,
   claudeMcpServers, claudeExtensions, targetOf,
-  budget, usageScan: createUsageScanner(), diagnose, search, onDiagHook, waitDiagHook, tokenFor, revokeToken, writeMemoryPrompt,
+  budget, plan, cloud, usageScan, diagnose, search, onDiagHook, waitDiagHook, tokenFor, revokeToken, writeMemoryPrompt,
   HOOK_JS, MCP_JS, TMP_DIR, SETTINGS_FILE, PORT,
   DEFAULT_COMMAND, JOB_COMMAND, SHELL, IS_WIN, PERMISSION_WAIT, APPS_PORT, ROOT_DIR: __dirname,
 };
@@ -974,6 +1005,7 @@ setInterval(() => budget.check(), 60000).unref(); // 日付が変わったら上
 server.listen(PORT, HOST, () => {
   console.log(`Claude Galaxy: http://localhost:${PORT}`);
   jobs.pump(); // 前回から待ちのまま残っているジョブを始める
+  if (!process.env.GALAXY_NO_PLAN) { plan.start(); cloud.start(); } // テストでは本物の Anthropic に問い合わせない
 });
 http.createServer(appsServer).listen(APPS_PORT, HOST)
   .on('error', (e) => console.error(`ローカル Web アプリ用ポート ${APPS_PORT} を開けません(${e.code})。APPS_PORT で変更できます。`));

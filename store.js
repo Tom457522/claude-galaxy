@@ -100,6 +100,10 @@ const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const SETTINGS_DEFAULTS = {
   permissionInbox: true, busEnabled: true, maxConcurrentJobs: 2, auditEnabled: true, auditDays: 30, worktreeDir: '', dispatchModel: 'haiku',
   budgetDailyUsd: 0, budgetJobUsd: 0, budgetSessionWarnUsd: 0, // 0 は「上限なし」
+  budgetIncludeCloud: true, // クラウドセッションの使用額も 1 日の上限に数える
+  // プランの利用率がこの % に達したらジョブを待たせる(0 は 100% = 実際の上限)。planPaceGuard は週のペースより先行したら待たせる
+  planLimitSessionPct: 0, planLimitWeeklyPct: 0, planPaceGuard: false, planPaceMargin: 10,
+  planMonthlyUsd: 0, // 月額の上書き(0 はプランから自動)
   notifyDesktop: true, // 承認待ち・ジョブの完了・予算をデスクトップに通知する(画面側で使う)
 };
 

@@ -235,12 +235,24 @@
           <div class="apps-head">
             <div>
               <h2><span>$</span> USAGE</h2>
-              <p>Claude Code 全体の使用量です(Galaxy の外で使った分も含む)。<code>~/.claude/projects</code> のトランスクリプトを API の単価で数えた<b>概算</b>で、定額プランの請求額ではありません。</p>
+              <p>上はプランの<b>実際の利用率</b>(Anthropic から取得)、下は <code>~/.claude/projects</code> のトランスクリプトと<b>クラウドセッション</b>(claude.ai/code・スマホアプリ)の記録を API の単価で数えた<b>概算</b>です(定額プランの請求額ではありません)。</p>
             </div>
             <div class="au-filters us-filters">
+              <select id="us-source" title="どこで使った分を数えるか"><option value="all" selected>すべて</option><option value="local">ローカル</option><option value="cloud">クラウド</option></select>
               <select id="us-days"><option value="7">7 日</option><option value="14">14 日</option><option value="30" selected>30 日</option><option value="90">90 日</option></select>
               <button id="us-reload" class="btn" title="読み直す">⟳</button>
             </div>
+          </div>
+          <div class="us-card pl-card">
+            <div class="us-card-head"><h3>プランと制限 <small id="pl-plan"></small></h3><span class="pl-head-r"><small id="pl-fetched" class="g-note"></small><button id="pl-reload" class="btn" title="Anthropic から読み直す">⟳</button></span></div>
+            <p id="pl-error" class="pl-error hidden"></p>
+            <div id="pl-meters" class="pl-meters"></div>
+            <div class="us-card-head"><h4 class="pl-sub">利用率の推移(今週の期間)</h4><div id="pl-legend" class="us-legend"></div></div>
+            <div id="pl-chart" class="us-chart pl-chart"></div>
+            <h4 class="pl-sub">1 時間ごとの API 換算コスト</h4>
+            <div id="pl-bars" class="us-chart pl-bars"></div>
+            <div id="pl-billing" class="pl-billing"></div>
+            <p id="pl-guard" class="g-note"></p>
           </div>
           <div id="us-kpis" class="us-kpis"></div>
           <div class="us-card">
@@ -253,6 +265,10 @@
             <div class="us-card"><h3>モデル別</h3><div id="us-models"></div></div>
           </div>
           <div class="us-card"><h3>コストの大きいセッション</h3><div id="us-sessions"></div></div>
+          <div class="us-card">
+            <div class="us-card-head"><h3>クラウドセッション <small id="cl-state"></small></h3></div>
+            <div id="cl-list"></div>
+          </div>
           <p id="us-note" class="g-note"></p>
         </div>
       </section>
@@ -339,6 +355,18 @@
               <label>ジョブ 1 件の既定の上限(USD)<input id="st-job" type="number" min="0" step="0.1"><small>予算を指定しなかったジョブに --max-budget-usd を付けます</small></label>
               <label>セッションの警告額(USD)<input id="st-sess" type="number" min="0" step="0.5"><small>超えたセッションのコストを赤く表示します</small></label>
             </div>
+            <label class="g-chk"><input type="checkbox" id="st-cloud"> クラウドセッション(claude.ai/code など)の使用額も 1 日の上限に数える</label>
+          </div>
+
+          <div class="set-sec">
+            <h3>プランの制限 <small id="st-plan"></small></h3>
+            <div class="set-grid">
+              <label>5 時間の制限で止める利用率(%)<input id="st-pl-sess" type="number" min="0" max="100" step="5"><small>この % に達したら新しいジョブを待たせます。0 なら 100%(実際の上限)で止めます</small></label>
+              <label>週間の制限で止める利用率(%)<input id="st-pl-week" type="number" min="0" max="100" step="5"><small>週の枠を残しておきたいときに。リセットされたら自動で再開します</small></label>
+              <label>月額(USD・0 でプランから自動)<input id="st-pl-price" type="number" min="0" step="1"><small>年払い・円建てなどで実際の請求額が違うときに上書きします</small></label>
+            </div>
+            <label class="g-chk"><input type="checkbox" id="st-pl-pace"> 週のペースガード: 週間の利用率が経過時間より <input id="st-pl-margin" class="st-inline-num" type="number" min="1" max="50" step="1"> ポイント以上先に進んだらジョブを待たせる</label>
+            <small class="g-note">対話セッションは止めません。利用率は 5 分ごとに Claude Code のログイン情報で Anthropic から読みます。</small>
           </div>
 
           <div class="set-sec">
