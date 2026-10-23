@@ -1,9 +1,9 @@
 'use strict';
-// 自己診断・全文検索・バックアップと復元・予算の API
+// 自己診断・全文検索・バックアップと復元・予算・使用量の API
 
 module.exports = function routes(ctx) {
   const {
-    app, wrap, sessions, jobs, bus, store, budget, diagnose, search, waitDiagHook, tokenFor, runClaude, assertCommandExists, audit,
+    app, wrap, sessions, jobs, bus, store, budget, usageScan, diagnose, search, waitDiagHook, tokenFor, runClaude, assertCommandExists, audit,
     HOOK_JS, MCP_JS, TMP_DIR, PORT, SHELL, JOB_COMMAND,
   } = ctx;
 
@@ -51,4 +51,6 @@ module.exports = function routes(ctx) {
   app.get('/api/restore', wrap(() => ({ pending: store.pendingRestore() })));
 
   app.get('/api/budget', wrap(() => budget.status()));
+  // Claude Code 全体の使用量(~/.claude/projects のトランスクリプトから数えた概算)
+  app.get('/api/usage', wrap((req) => usageScan.report({ days: req.query.days })));
 };

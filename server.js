@@ -12,7 +12,7 @@ const pty = require('node-pty');
 const { buildGraph } = require('./graph');
 const appsStore = require('./apps');
 const store = require('./store');
-const { UsageTracker } = require('./usage');
+const { UsageTracker, createUsageScanner } = require('./usage');
 const { createJobManager } = require('./jobs');
 const { createAutomations } = require('./automations');
 const { createBus } = require('./bus');
@@ -885,7 +885,7 @@ const ctx = {
   removeMcpConfig, cleanupWorktree, broadcast, sseClients, resolveCwd, isClaudeCommand, assertCommandExists,
   agentName, agentList, resolveAgent, typeInto, busCall, hookAuth, runClaude, buildGraph,
   claudeMcpServers, claudeExtensions, targetOf,
-  budget, diagnose, search, onDiagHook, waitDiagHook, tokenFor, revokeToken, writeMemoryPrompt,
+  budget, usageScan: createUsageScanner(), diagnose, search, onDiagHook, waitDiagHook, tokenFor, revokeToken, writeMemoryPrompt,
   HOOK_JS, MCP_JS, TMP_DIR, SETTINGS_FILE, PORT,
   DEFAULT_COMMAND, JOB_COMMAND, SHELL, IS_WIN, PERMISSION_WAIT, APPS_PORT, ROOT_DIR: __dirname,
 };
