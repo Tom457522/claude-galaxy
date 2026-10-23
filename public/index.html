@@ -14,6 +14,8 @@
       <button class="tab active" data-tab="home">ホーム</button>
       <button class="tab" data-tab="apps">アプリ</button>
       <button class="tab" data-tab="term">ターミナル <span id="tab-badge" class="tab-badge"></span></button>
+      <button class="tab" data-tab="jobs">ジョブ <span id="tab-jobs-badge" class="tab-badge tab-badge-run"></span></button>
+      <button class="tab" data-tab="board">ボード <span id="tab-board-badge" class="tab-badge"></span></button>
     </nav>
     <button id="btn-new" class="btn primary">＋ 新規セッション</button>
     <div class="spacer"></div>
@@ -155,6 +157,76 @@
         <div id="apps-frames" class="apps-frames hidden"></div>
       </section>
 
+      <!-- ジョブ: キュー・履歴・オートメーション -->
+      <section id="jobs" class="jobs hidden">
+        <div class="jobs-wrap">
+          <div class="apps-head">
+            <div>
+              <h2><span>◷</span> JOBS</h2>
+              <p>Claude Code をヘッドレス(<code id="jobs-cmd">claude -p</code>)で実行するキューです。確認が要る操作は受信箱で答えます(答えなければ拒否)。</p>
+            </div>
+            <div class="jobs-tools">
+              <label class="layout-label">同時実行
+                <select id="jobs-max">
+                  <option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+                  <option>6</option><option>8</option><option>10</option>
+                </select>
+              </label>
+              <button id="jobs-add" class="btn primary">＋ ジョブを追加</button>
+            </div>
+          </div>
+          <div class="apps-sec">
+            <div class="apps-lbl">QUEUE <small id="jobs-count"></small></div>
+            <div id="jobs-active" class="job-list"></div>
+          </div>
+          <div class="apps-sec">
+            <div class="apps-lbl auto-lbl">AUTOMATIONS <small>時刻 / ファイル変更 / コミットでジョブを登録</small>
+              <button id="autos-add" class="btn">＋ オートメーション</button></div>
+            <div id="autos-list" class="autos-grid"></div>
+          </div>
+          <div class="apps-sec">
+            <div class="apps-lbl">HISTORY <small id="jobs-spent"></small></div>
+            <div id="jobs-done" class="job-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ボード: メッセージと共有メモリ -->
+      <section id="board" class="board hidden">
+        <div class="board-col">
+          <div class="board-head">
+            <h3>MESSAGES</h3>
+            <label class="inbox-toggle" title="オンにすると、このアプリで起動する Claude(対話セッション・ジョブ)に共有バスの MCP サーバー(galaxy)を追加します。&#10;変更は次に起動するものから反映されます。"><input type="checkbox" id="bus-on"> 共有バスを使う</label>
+            <button id="bm-clear" class="btn">すべて消す</button>
+          </div>
+          <div id="board-msgs" class="board-msgs"></div>
+          <form id="bm-form" class="bm-form">
+            <div class="bm-row">
+              <label>宛先 <select id="bm-to"></select></label>
+              <label id="bm-prompt-wrap" class="g-chk hidden" title="相手が待機中なら、メッセージをそのままプロンプトとして入力して送信します"><input type="checkbox" id="bm-prompt"> プロンプトとして入力</label>
+            </div>
+            <textarea id="bm-text" rows="3" placeholder="メッセージ(Ctrl+Enter で送信)。エージェントは read_messages で読みます"></textarea>
+            <div class="dlg-actions"><button type="submit" class="btn primary">送信</button></div>
+          </form>
+        </div>
+        <div class="board-col">
+          <div class="board-head">
+            <h3>SHARED MEMORY</h3>
+            <span id="mem-count" class="g-note"></span>
+          </div>
+          <input id="mem-search" type="text" placeholder="検索(キー・値・タグ)" autocomplete="off">
+          <div id="mem-list" class="mem-list"></div>
+          <form id="mf-form" class="bm-form">
+            <div class="bm-row">
+              <input id="mf-key" type="text" placeholder="キー(例: project/decisions)" autocomplete="off" required>
+              <input id="mf-tags" type="text" placeholder="タグ(カンマ区切り)" autocomplete="off">
+            </div>
+            <textarea id="mf-value" rows="3" placeholder="値"></textarea>
+            <div class="dlg-actions"><button type="submit" class="btn primary">書き込む</button></div>
+          </form>
+        </div>
+      </section>
+
       <main id="grid" class="grid hidden" data-cols="auto"></main>
       <div id="empty" class="empty hidden">
         <p>セッションがありません</p>
@@ -250,12 +322,76 @@
     </form>
   </dialog>
 
+  <dialog id="dlg-job" class="dlg-wide">
+    <form method="dialog" id="jf-form">
+      <h2 id="jf-title">ジョブを追加</h2>
+      <div id="af-part" class="hidden">
+        <div class="app-types">
+          <label class="app-type"><input type="radio" name="af-kind" value="cron" checked><b>⏱ 時刻</b><small>cron 式で決まった時刻に</small></label>
+          <label class="app-type"><input type="radio" name="af-kind" value="files"><b>✎ ファイル変更</b><small>フォルダ内の変更をまとめて</small></label>
+          <label class="app-type"><input type="radio" name="af-kind" value="git"><b>⑂ コミット</b><small>新しいコミットができたら</small></label>
+        </div>
+        <div id="af-cron-wrap">
+          <label>cron 式(分 時 日 月 曜日・ローカル時刻)
+            <input id="af-cron" type="text" autocomplete="off" spellcheck="false">
+          </label>
+          <div id="af-presets" class="g-cats"></div>
+        </div>
+        <label id="af-path-wrap">監視するフォルダ(コミットならリポジトリ)
+          <input id="af-path" type="text" autocomplete="off" spellcheck="false" placeholder="C:\Users\you\projects\my-app">
+        </label>
+        <div class="app-row">
+          <label id="af-debounce-wrap">まとめる秒数 <input id="af-debounce" type="number" min="2" max="3600"></label>
+          <label class="g-chk" title="前回のジョブが待ち・実行中なら、今回は登録しません"><input type="checkbox" id="af-skip"> 前のジョブが実行中なら見送る</label>
+        </div>
+      </div>
+      <label>名前(任意)
+        <input id="jf-name" type="text" maxlength="80" autocomplete="off">
+      </label>
+      <label>プロンプト <small id="af-vars" class="g-note"></small>
+        <textarea id="jf-prompt" rows="6" spellcheck="false" placeholder="例: テストを実行して、落ちているものを直してください"></textarea>
+      </label>
+      <label>作業ディレクトリ(空ならホーム。ファイル変更・コミットでは監視フォルダ)
+        <input id="jf-cwd" type="text" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="app-row">
+        <label>モデル(任意) <input id="jf-model" type="text" placeholder="sonnet / opus / haiku" autocomplete="off"></label>
+        <label>優先度 <select id="jf-priority"><option value="high">高</option><option value="normal">普通</option><option value="low">低</option></select></label>
+        <label>予算 USD(任意) <input id="jf-budget" type="number" min="0" step="0.1" placeholder="例: 2"></label>
+      </div>
+      <label>権限モード
+        <select id="jf-mode"></select>
+      </label>
+      <label>確認なしで許可するツール(任意・1 行に 1 つ)
+        <textarea id="jf-tools" rows="2" spellcheck="false" placeholder="Bash(npm test:*)&#10;Edit"></textarea>
+      </label>
+      <p id="jf-error" class="error hidden"></p>
+      <div class="dlg-actions">
+        <button type="button" id="jf-cancel" class="btn">キャンセル</button>
+        <button type="submit" id="jf-submit" class="btn primary">キューに入れる</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-jobdetail" class="dlg-wide">
+    <div class="jd">
+      <div class="jd-head"><h2 id="jd-title"></h2><button id="jd-close" class="icon-btn" title="閉じる">✕</button></div>
+      <div id="jd-meta" class="job-meta jd-meta"></div>
+      <details class="jd-prompt-wrap"><summary>プロンプト</summary><pre id="jd-prompt" class="perm-body"></pre></details>
+      <p id="jd-error" class="error hidden"></p>
+      <div id="jd-log" class="jd-log"></div>
+      <div class="dlg-actions"><button id="jd-copy" class="btn">内容をコピーして新しいジョブ</button></div>
+    </div>
+  </dialog>
+
   <script src="/vendor/xterm/lib/xterm.js"></script>
   <script src="/vendor/addon-fit/lib/addon-fit.js"></script>
   <script src="/vendor/addon-web-links/lib/addon-web-links.js"></script>
   <script src="/vendor/graph3d.bundle.js"></script>
   <script src="/graph-view.js"></script>
   <script src="/apps-view.js"></script>
+  <script src="/jobs-view.js"></script>
+  <script src="/board-view.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

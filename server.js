@@ -13,6 +13,9 @@ const { buildGraph } = require('./graph');
 const appsStore = require('./apps');
 const store = require('./store');
 const { UsageTracker } = require('./usage');
+const { createJobManager } = require('./jobs');
+const { createAutomations } = require('./automations');
+const { createBus } = require('./bus');
 
 const IS_WIN = process.platform === 'win32';
 const HOST = '127.0.0.1'; // ローカルホスト限定(外部公開しない)
@@ -47,7 +50,14 @@ const HOOK_EVENTS = [
 ];
 // 権限確認を受信箱で待つ上限(秒)。過ぎたら通常の確認ダイアログに戻す
 const PERMISSION_WAIT = Math.max(10, Number(process.env.GALAXY_PERMISSION_WAIT) || 300);
-const SETTINGS_FILE = path.join(os.tmpdir(), 'claude-galaxy', `hooks-${PORT}.json`);
+const TMP_DIR = path.join(os.tmpdir(), 'claude-galaxy');
+const SETTINGS_FILE = path.join(TMP_DIR, `hooks-${PORT}.json`);
+const MCP_JS = path.join(__dirname, 'mcp-bus.js');
+// 共有バスのツールのうち、読むだけのもの・自分の記録を書くだけのものは確認なしで使えるようにする
+// (ジョブの登録・中止、ほかのセッションへの入力、メモリの削除は確認が要る)
+const BUS_AUTO_ALLOW = [
+  'list_agents', 'read_messages', 'send_message', 'get_job', 'list_jobs', 'memory_read', 'memory_search', 'memory_write',
+].map((t) => `mcp__galaxy__${t}`);
 const fwd = (p) => p.replace(/\\/g, '/'); // bash / PowerShell / cmd のどれでも通るよう / 区切りにする
 
 // このアプリで起動した claude にだけ渡す(--settings)。ユーザーの settings.json は書き換えない。
@@ -62,8 +72,32 @@ function writeHookSettings() {
   hooks.PermissionRequest = [{
     hooks: [{ type: 'command', command: `node "${fwd(HOOK_JS)}" PermissionRequest`, timeout: PERMISSION_WAIT + 30 }],
   }];
-  fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ hooks }, null, 2));
+  fs.mkdirSync(TMP_DIR, { recursive: true });
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ hooks, permissions: { allow: BUS_AUTO_ALLOW } }, null, 2));
+}
+
+// エージェントごとの MCP 設定(共有バス)。トークンを含むので本人だけが読めるようにする
+const mcpFile = (id) => path.join(TMP_DIR, `mcp-${PORT}-${id}.json`);
+function writeMcpConfig(id) {
+  if (!settings.busEnabled) return null;
+  const file = mcpFile(id);
+  const conf = {
+    mcpServers: {
+      galaxy: {
+        type: 'stdio',
+        command: 'node',
+        args: [fwd(MCP_JS)],
+        env: { GALAXY_PORT: String(PORT), GALAXY_TOKEN: HOOK_TOKEN, GALAXY_SESSION: id },
+      },
+    },
+  };
+  fs.mkdirSync(TMP_DIR, { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(conf, null, 2), { mode: 0o600 });
+  try { fs.chmodSync(file, 0o600); } catch (_) { /* Windows */ }
+  return file;
+}
+function removeMcpConfig(id) {
+  try { fs.unlinkSync(mcpFile(id)); } catch (_) { /* ignore */ }
 }
 
 const CLAUDE_SUBCOMMANDS = new Set([
@@ -83,8 +117,8 @@ function stripResumeFlags(rest) {
 const SAFE_ID = /^[A-Za-z0-9_-]{8,100}$/;
 
 // 起動コマンドが claude の対話起動なら、先頭語の直後に --settings を差し込む
-//   resumeId を渡すと、--resume <id> も付ける(会話の再開)
-function injectSettings(cmdline, resumeId) {
+//   resumeId を渡すと、--resume <id> も付ける(会話の再開)。mcp を渡すと --mcp-config も付ける
+function injectSettings(cmdline, resumeId, mcp) {
   const m = /^("[^"]+"|\S+)([\s\S]*)$/.exec(cmdline.trim());
   if (!m) return { cmd: cmdline, injected: false };
   const first = m[1].replace(/^"|"$/g, '');
@@ -99,7 +133,9 @@ function injectSettings(cmdline, resumeId) {
     rest = stripResumeFlags(rest);
     resume = ` --resume ${resumeId}`;
   }
-  return { cmd: `${m[1]} --settings "${fwd(SETTINGS_FILE)}"${resume}${rest}`, injected: true, resumed: !!resume };
+  // --mcp-config は複数の値を取るので、直後に --settings を置いて区切る
+  const mcpArg = mcp ? ` --mcp-config "${fwd(mcp)}"` : '';
+  return { cmd: `${m[1]}${mcpArg} --settings "${fwd(SETTINGS_FILE)}"${resume}${rest}`, injected: true, resumed: !!resume };
 }
 
 const app = express();
@@ -223,6 +259,7 @@ const publicInfo = (s) => ({
   restored: s.restored,
   usage: s.usage.totals,
   permissions: [...permissions.values()].filter((x) => x.sessionId === s.id).length,
+  unread: bus.unreadCount(s.id),
 });
 const emit = (s) => broadcast('session', publicInfo(s));
 
@@ -412,7 +449,8 @@ function spawnSession(session, { resume = false } = {}) {
   const shell = IS_WIN ? (process.env.COMSPEC || 'cmd.exe') : (process.env.SHELL || '/bin/bash');
   assertCommandExists(session.command, shell, session.cwd);
 
-  const { cmd: finalCmd, injected, resumed } = injectSettings(session.command, resume ? session.claudeSessionId : null);
+  const mcp = isClaudeCommand(session.command) ? writeMcpConfig(session.id) : null;
+  const { cmd: finalCmd, injected, resumed } = injectSettings(session.command, resume ? session.claudeSessionId : null, mcp);
   if (resume && !resumed) throw new Error('このセッションは再開できません(Claude のセッション ID が記録されていません)');
 
   // Windows: cmd.exe /c で実行(claude.cmd / claude.exe を PATHEXT で解決。終了すると PTY も閉じる)。
@@ -477,7 +515,7 @@ function spawnSession(session, { resume = false } = {}) {
   });
 }
 
-function createSession({ name, cwd, command, appId }) {
+function createSession({ name, cwd, command, appId, resumeId }) {
   const id = `s${++seq}`;
   const session = newSessionObject({
     id,
@@ -486,7 +524,8 @@ function createSession({ name, cwd, command, appId }) {
     command: (command || DEFAULT_COMMAND).trim(),
     appId,
   });
-  spawnSession(session);
+  if (resumeId) session.claudeSessionId = resumeId;
+  spawnSession(session, { resume: !!resumeId });
   sessions.set(id, session);
   emit(session);
   persist();
@@ -541,6 +580,7 @@ let permSeq = 0;
 const permInfo = (x) => ({
   id: x.id,
   sessionId: x.sessionId,
+  agentName: agentName(x.sessionId),
   at: x.at,
   expiresAt: x.expiresAt,
   tool: x.tool,
@@ -586,6 +626,194 @@ function clearStalePermissions(s, p) {
   }
 }
 
+// ---- ジョブ(ヘッドレス実行)----
+const SHELL = IS_WIN ? (process.env.COMSPEC || 'cmd.exe') : (process.env.SHELL || '/bin/bash');
+// ジョブで使う claude コマンド(CLAUDE_JOB_CMD で変更可。既定は CLAUDE_CMD が claude ならそれ)
+const JOB_COMMAND = (process.env.CLAUDE_JOB_CMD || (isClaudeCommand(DEFAULT_COMMAND) ? DEFAULT_COMMAND : 'claude')).trim();
+const MAX_AGENT_DEPTH = 3; // ジョブがジョブを登録できる深さ
+const MAX_AGENT_JOBS = 20; // エージェントが登録した、待ち・実行中のジョブの上限
+
+function buildJobCommand(job) {
+  const m = /^("[^"]+"|\S+)([\s\S]*)$/.exec(JOB_COMMAND);
+  const args = ['-p', '--output-format stream-json', '--verbose'];
+  const mcp = writeMcpConfig(job.id);
+  if (mcp) args.push(`--mcp-config "${fwd(mcp)}"`);
+  args.push(`--settings "${fwd(SETTINGS_FILE)}"`);
+  if (job.model) args.push(`--model ${job.model}`);
+  if (job.permissionMode) args.push(`--permission-mode ${job.permissionMode}`);
+  if (job.maxBudgetUsd) args.push(`--max-budget-usd ${job.maxBudgetUsd}`);
+  if (job.resumeId) args.push(`--resume ${job.resumeId}`);
+  if (job.allowedTools.length) args.push(`--allowedTools ${job.allowedTools.map((t) => `"${t}"`).join(' ')}`); // 可変長なので最後に置く
+  return `${m[1]}${m[2]} ${args.join(' ')}`;
+}
+
+const jobs = createJobManager({
+  shell: SHELL,
+  resolveCwd,
+  jobCommand: () => JOB_COMMAND,
+  checkCommand: (cmd, cwd) => assertCommandExists(cmd, SHELL, cwd),
+  buildCommand: buildJobCommand,
+  envFor: (job) => ({ ...process.env, GALAXY_SESSION: job.id, GALAXY_PORT: String(PORT), GALAXY_TOKEN: HOOK_TOKEN }),
+  getMaxConcurrent: () => settings.maxConcurrentJobs,
+  onChange: (j) => broadcast('job', j),
+  onRemove: (id) => broadcast('job-removed', { id }),
+  onFinish: (j) => {
+    cancelPermissions(j.id);
+    removeMcpConfig(j.id);
+    // 登録したエージェントに結果を知らせる(メッセージとして)
+    if (j.parent && j.source === 'agent') {
+      const text = `ジョブ ${j.id}「${j.name}」が${j.status === 'done' ? '完了' : `終了(${j.status})`}しました。` +
+        `${j.result ? `\n結果:\n${j.result.slice(0, 4000)}` : ''}${j.error ? `\nエラー: ${j.error}` : ''}`;
+      try { bus.send({ from: j.id, fromName: j.name, to: j.parent, toName: agentName(j.parent), text }); } catch (_) { /* ignore */ }
+    }
+  },
+});
+
+const automations = createAutomations({
+  resolveCwd,
+  submit: (t, meta) => jobs.create(t, { ...meta, defaultCwd: t.cwd }),
+  isActive: (id) => { const j = jobs.get(id); return !!j && (j.status === 'queued' || j.status === 'running'); },
+  jobEndedAt: (id) => jobs.get(id)?.endedAt || null,
+  onChange: (a) => broadcast('automation', a),
+  onRemove: (id) => broadcast('automation-removed', { id }),
+});
+
+// ---- 共有バス(エージェント間のメッセージ・共有メモリ)----
+let boardTimer = null;
+const bus = createBus({
+  onChange: () => {
+    // 未読数の変化をセッション表示に反映し、ボード画面に更新を知らせる(まとめて)
+    if (boardTimer) return;
+    boardTimer = setTimeout(() => {
+      boardTimer = null;
+      broadcast('board', { unreadUser: bus.unreadCount('user') });
+      for (const s of sessions.values()) emit(s);
+    }, 200);
+  },
+});
+
+function agentName(id) {
+  if (id === 'user') return 'あなた';
+  if (id === 'all') return '全員';
+  const s = sessions.get(id);
+  if (s) return s.name;
+  const j = jobs.get(id);
+  return j ? j.name : id;
+}
+
+function agentList() {
+  return [
+    ...[...sessions.values()].filter((s) => s.alive).map((s) => ({
+      id: s.id, kind: 'session', name: s.name, cwd: s.cwd, status: s.status, detail: s.statusDetail,
+    })),
+    ...jobs.list().filter((j) => j.status === 'queued' || j.status === 'running').map((j) => ({
+      id: j.id, kind: 'job', name: j.name, cwd: j.cwd, status: j.status, parent: j.parent,
+    })),
+  ];
+}
+
+// 宛先の解決: ID / 名前(大文字小文字を区別しない)/ user / all / parent
+function resolveAgent(to, from) {
+  const t = String(to || '').trim();
+  if (!t) throw new Error('宛先を指定してください');
+  if (t === 'user' || t === 'all') return t;
+  if (t === 'parent') {
+    const j = jobs.get(from);
+    if (!j || !j.parent) throw new Error('あなたを登録したエージェントはいません');
+    return j.parent;
+  }
+  if (sessions.has(t) || jobs.get(t)) return t;
+  const low = t.toLowerCase();
+  const hit = agentList().find((a) => a.name.toLowerCase() === low) ||
+    [...sessions.values()].find((s) => s.name.toLowerCase() === low);
+  if (!hit) throw new Error(`宛先が見つかりません: ${t}(list_agents で確認してください)`);
+  return hit.id;
+}
+
+const jobSummary = (j) => ({
+  id: j.id, name: j.name, status: j.status, parent: j.parent, cwd: j.cwd, createdAt: j.createdAt, endedAt: j.endedAt,
+  costUsd: j.costUsd, result: j.result, error: j.error, lastText: j.status === 'running' ? j.lastText : undefined,
+});
+const msgOut = (m) => ({ id: m.id, from: m.from, fromName: m.fromName, to: m.to, text: m.text, at: new Date(m.at).toISOString(), replyTo: m.replyTo });
+
+// 入力待ちの対話セッションに、文章を貼り付けて送信する(ブラケットペーストで複数行もまとめて入る)
+function typeInto(s, text) {
+  s.proc.write(`\x1b[200~${text.replace(/\x1b/g, '')}\x1b[201~`);
+  setTimeout(() => { if (s.alive) s.proc.write('\r'); }, 150);
+}
+
+// MCP サーバー(mcp-bus.js)からのツール呼び出し
+async function busCall(from, tool, a) {
+  const me = sessions.get(from) || jobs.get(from);
+  if (!me) throw new Error('呼び出し元のエージェントが見つかりません');
+  const myName = agentName(from);
+  switch (tool) {
+    case 'whoami': {
+      const j = jobs.get(from);
+      return { id: from, name: myName, kind: j ? 'job' : 'session', parent: j ? j.parent : null };
+    }
+    case 'list_agents':
+      return { you: from, agents: agentList(), note: 'メッセージは ID か名前で送れます。"user" はこのアプリを使っている人です。' };
+    case 'send_message': {
+      const to = resolveAgent(a.to, from);
+      const m = bus.send({ from, fromName: myName, to, toName: agentName(to), text: a.text, replyTo: typeof a.reply_to === 'string' ? a.reply_to : null });
+      return { sent: m.id, to, toName: m.toName };
+    }
+    case 'read_messages':
+      return bus.inbox(from, { unreadOnly: !a.include_read }).map(msgOut);
+    case 'send_prompt': {
+      const to = resolveAgent(a.to, from);
+      const s = sessions.get(to);
+      if (!s || !s.alive) throw new Error('送り先は実行中の対話セッションにしてください');
+      if (to === from) throw new Error('自分には送れません');
+      if (!['idle', 'done'].includes(s.status)) throw new Error(`相手は今「${s.status}」なので送れません。send_message で送ってください`);
+      const text = String(a.text || '').trim().slice(0, 20000);
+      if (!text) throw new Error('本文が空です');
+      bus.send({ from, fromName: myName, to, toName: s.name, text: `(プロンプトとして入力)\n${text}` });
+      bus.inbox(to, { unreadOnly: true }); // 入力したものは既読扱い
+      typeInto(s, `[${myName} (${from}) から] ${text}`);
+      return { typedInto: to };
+    }
+    case 'submit_job': {
+      const depth = (jobs.get(from)?.depth || 0) + 1;
+      if (depth > MAX_AGENT_DEPTH) throw new Error(`ジョブからジョブを登録できるのは ${MAX_AGENT_DEPTH} 段までです`);
+      const active = jobs.list().filter((j) => j.source === 'agent' && (j.status === 'queued' || j.status === 'running')).length;
+      if (active >= MAX_AGENT_JOBS) throw new Error(`エージェントが登録した待ち・実行中のジョブが上限(${MAX_AGENT_JOBS})に達しています`);
+      const j = jobs.create({
+        prompt: a.prompt, name: a.name, cwd: a.cwd, model: a.model,
+        permissionMode: a.permission_mode || '', priority: a.priority, maxBudgetUsd: a.max_budget_usd,
+      }, { strict: true, source: 'agent', parent: from, depth, defaultCwd: me.cwd });
+      return { id: j.id, name: j.name, status: j.status, note: '終わると結果があなた宛てのメッセージでも届きます。get_job で待つこともできます。' };
+    }
+    case 'get_job': {
+      const j = await jobs.wait(String(a.id || ''), Math.min(240, Math.max(0, Number(a.wait_seconds) || 0)) * 1000);
+      if (!j) throw new Error(`ジョブが見つかりません: ${a.id}`);
+      return jobSummary(j);
+    }
+    case 'list_jobs':
+      return jobs.list()
+        .filter((j) => (!a.status || j.status === a.status) && (!a.mine || j.parent === from))
+        .sort((x, y) => y.createdAt - x.createdAt).slice(0, 50)
+        .map((j) => ({ ...jobSummary(j), result: j.result ? j.result.slice(0, 300) : '' }));
+    case 'cancel_job': {
+      const j = jobs.get(String(a.id || ''));
+      if (!j) throw new Error('ジョブが見つかりません');
+      if (j.parent !== from) throw new Error('自分が登録したジョブだけ中止できます');
+      return { canceled: jobs.cancel(j.id) };
+    }
+    case 'memory_write':
+      return bus.memWrite(a.key, a.value, { tags: a.tags, author: `${myName} (${from})` });
+    case 'memory_read':
+      return bus.memRead(String(a.key || '')) || { error: 'そのキーはありません' };
+    case 'memory_search':
+      return bus.memSearch(a.query, { prefix: typeof a.prefix === 'string' ? a.prefix : '' });
+    case 'memory_delete':
+      return { deleted: bus.memDelete(String(a.key || '')) };
+    default:
+      throw new Error(`unknown tool: ${tool}`);
+  }
+}
+
 // ---- REST API ----
 app.get('/api/sessions', (_req, res) => {
   res.json([...sessions.values()].map(publicInfo));
@@ -625,6 +853,7 @@ app.delete('/api/sessions/:id', (req, res) => {
   for (const ws of s.clients) ws.close();
   sessions.delete(s.id);
   store.removeLog(s.id);
+  removeMcpConfig(s.id);
   persist();
   broadcast('removed', { id: s.id });
   res.status(204).end();
@@ -667,11 +896,78 @@ app.get('/api/settings', (_req, res) => res.json(settings));
 app.put('/api/settings', (req, res) => {
   const b = req.body || {};
   if (typeof b.permissionInbox === 'boolean') settings.permissionInbox = b.permissionInbox;
+  if (typeof b.busEnabled === 'boolean') settings.busEnabled = b.busEnabled;
+  if (Number.isFinite(b.maxConcurrentJobs)) settings.maxConcurrentJobs = Math.min(10, Math.max(1, Math.round(b.maxConcurrentJobs)));
+  jobs.pump();
   try { store.saveSettings(settings); } catch (e) { return res.status(500).json({ error: e.message }); }
   if (!settings.permissionInbox) for (const x of [...permissions.values()]) resolvePermission(x.id, { behavior: 'ask' });
   broadcast('settings', settings);
   res.json(settings);
 });
+
+// ---- ジョブ ----
+const wrap = (fn) => (req, res) => {
+  try {
+    const out = fn(req, res);
+    if (out === undefined) return res.status(204).end();
+    res.json(out);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+};
+
+app.get('/api/jobs', wrap(() => ({ jobs: jobs.list(), maxConcurrent: settings.maxConcurrentJobs, command: JOB_COMMAND })));
+app.post('/api/jobs', wrap((req) => jobs.create(req.body || {}, { source: 'ui' })));
+app.post('/api/jobs/:id/cancel', wrap((req) => { jobs.cancel(req.params.id); }));
+app.post('/api/jobs/:id/retry', wrap((req) => jobs.retry(req.params.id)));
+app.delete('/api/jobs/:id', wrap((req) => { if (!jobs.remove(req.params.id)) throw new Error('見つかりません'); }));
+app.get('/api/jobs/:id/transcript', wrap((req) => jobs.transcript(req.params.id)));
+// ジョブの会話を、対話セッションとして開く(claude --resume)
+app.post('/api/jobs/:id/open', wrap((req) => {
+  const j = jobs.get(req.params.id);
+  if (!j) throw new Error('見つかりません');
+  if (!j.claudeSessionId) throw new Error('このジョブには Claude のセッション ID がありません');
+  if (j.status === 'running') throw new Error('実行中のジョブは開けません(終わってから開いてください)');
+  const cmd = isClaudeCommand(DEFAULT_COMMAND) ? DEFAULT_COMMAND : JOB_COMMAND;
+  return publicInfo(createSession({ name: `${j.name} (${j.id})`, cwd: j.cwd, command: cmd, resumeId: j.claudeSessionId }));
+}));
+
+// ---- オートメーション ----
+app.get('/api/automations', wrap(() => automations.list()));
+app.post('/api/automations', wrap((req) => automations.create(req.body || {})));
+app.put('/api/automations/:id', wrap((req) => {
+  const a = automations.update(req.params.id, req.body || {});
+  if (!a) throw new Error('見つかりません');
+  return a;
+}));
+app.delete('/api/automations/:id', wrap((req) => { if (!automations.remove(req.params.id)) throw new Error('見つかりません'); }));
+app.post('/api/automations/:id/run', wrap((req) => automations.run(req.params.id)));
+
+// ---- ボード(メッセージと共有メモリを人が見る・書く)----
+app.get('/api/board', wrap(() => ({
+  messages: bus.messages(),
+  memory: bus.memSearch('', { limit: 2000 }),
+  unreadUser: bus.unreadCount('user'),
+  agents: agentList(),
+})));
+app.post('/api/board/messages', wrap((req) => {
+  const b = req.body || {};
+  const to = resolveAgent(b.to, 'user');
+  const m = bus.send({ from: 'user', fromName: 'あなた', to, toName: agentName(to), text: b.text });
+  // 待機中の対話セッション宛てなら、そのままプロンプトとして入力することもできる
+  if (b.asPrompt) {
+    const s = sessions.get(to);
+    if (!s || !s.alive) throw new Error('プロンプトとして送れるのは実行中の対話セッションだけです');
+    typeInto(s, b.text);
+    bus.inbox(to, { unreadOnly: true });
+  }
+  return m;
+}));
+app.post('/api/board/read', wrap(() => { bus.inbox('user', { unreadOnly: true }); }));
+app.delete('/api/board/messages', wrap(() => { bus.clearMessages(); }));
+app.put('/api/board/memory', wrap((req) => {
+  const b = req.body || {};
+  return bus.memWrite(b.key, b.value, { tags: b.tags, author: 'あなた' });
+}));
+app.delete('/api/board/memory', wrap((req) => { if (!bus.memDelete(String(req.query.key || ''))) throw new Error('見つかりません'); }));
 
 app.get('/api/defaults', (_req, res) => {
   // ホーム画面(グラフ)のルート候補: ホーム、このアプリの親フォルダ、いま動いているセッションの作業フォルダ
@@ -745,20 +1041,34 @@ app.post('/api/hook', (req, res) => {
   res.status(204).end();
 });
 
+// mcp-bus.js からのツール呼び出し(トークン必須。from は起動時に渡したエージェント ID)
+app.post('/api/bus', async (req, res) => {
+  if (!hookAuth(req)) return res.status(401).end();
+  const b = req.body || {};
+  try {
+    const result = await busCall(String(b.from || ''), String(b.tool || ''), b.args && typeof b.args === 'object' ? b.args : {});
+    res.json({ result });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 // hook.js からの権限確認。受信箱で決まるまで応答を保留する(long poll)
 app.post('/api/permission', (req, res) => {
   if (!hookAuth(req)) return res.status(401).end();
-  const s = sessions.get(req.body?.sessionId);
+  const agentId = req.body?.sessionId;
+  const s = sessions.get(agentId);
+  const isJob = !s && jobs.isRunning(agentId); // ジョブ(claude -p)の確認も受信箱へ。答えがなければ拒否になる
   const p = req.body?.payload;
-  if (!s || !s.alive || !p || typeof p !== 'object' || !settings.permissionInbox) {
+  if ((!isJob && (!s || !s.alive)) || !p || typeof p !== 'object' || !settings.permissionInbox) {
     return res.json({ behavior: 'ask' });
   }
-  trackTranscript(s, p);
+  if (s) trackTranscript(s, p);
   const id = `p${++permSeq}`;
   const now = Date.now();
   const x = {
     id,
-    sessionId: s.id,
+    sessionId: agentId,
     at: now,
     expiresAt: now + PERMISSION_WAIT * 1000,
     tool: typeof p.tool_name === 'string' ? p.tool_name : '?',
@@ -774,9 +1084,11 @@ app.post('/api/permission', (req, res) => {
   // hook 側が先に終わった(Claude 側で中断された等)ら片付ける
   res.on('close', () => { if (permissions.has(id)) resolvePermission(id, { behavior: 'ask' }); });
   permissions.set(id, x);
-  setStatus(s, 'waiting', `${x.tool} の許可待ち`);
   broadcast('permission', permInfo(x));
-  emit(s);
+  if (s) {
+    setStatus(s, 'waiting', `${x.tool} の許可待ち`);
+    emit(s);
+  }
 });
 
 app.get('/api/events', (req, res) => {
@@ -830,9 +1142,12 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 writeHookSettings();
+// 前回の起動で残った MCP 設定(トークン入り)を消す
+for (const f of fs.readdirSync(TMP_DIR)) if (f.startsWith(`mcp-${PORT}-`)) removeMcpConfig(f.slice(`mcp-${PORT}-`.length, -5));
 restoreSessions();
 server.listen(PORT, HOST, () => {
   console.log(`Claude Galaxy: http://localhost:${PORT}`);
+  jobs.pump(); // 前回から待ちのまま残っているジョブを始める
 });
 http.createServer(appsServer).listen(APPS_PORT, HOST)
   .on('error', (e) => console.error(`ローカル Web アプリ用ポート ${APPS_PORT} を開けません(${e.code})。APPS_PORT で変更できます。`));
@@ -844,6 +1159,8 @@ function shutdown() {
   for (const s of sessions.values()) {
     if (s.alive) { try { s.proc.kill(); } catch (_) { /* ignore */ } }
   }
+  jobs.shutdown();
+  for (const f of fs.readdirSync(TMP_DIR)) if (f.startsWith(`mcp-${PORT}-`)) removeMcpConfig(f.slice(`mcp-${PORT}-`.length, -5));
   store.closeAll();
   process.exit(0);
 }
