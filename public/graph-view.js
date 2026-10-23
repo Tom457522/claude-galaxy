@@ -131,7 +131,7 @@
     return texCache.get(k);
   }
   const labelWanted = (n) => S.f.labels && (n.kind === 'session' || n.kind === 'hub' || n.kind === 'root' || S.nodes.length <= 220 || n.depth <= 1);
-  const STATUS_COLORS = { starting: '#d97757', idle: '#d97757', working: '#f08a5d', waiting: '#e5b567', done: '#8fbf7f', error: '#e5484d', exited: '#5b534c' };
+  const STATUS_COLORS = { starting: '#d77757', idle: '#d77757', working: '#4ea1ff', waiting: '#ffc53d', done: '#3fc56b', error: '#ff4d5e', exited: '#6e6862' };
 
   function makeLabel(text, h, color) {
     const t = new SpriteText(text, h, color);
@@ -188,7 +188,7 @@
       g.add(glow);
       n.__glow = glow;
       const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: statusTexture(n.status), transparent: true, depthWrite: false }));
-      sp.scale.set(13, 14, 1);
+      sp.scale.set(13, 13, 1);
       g.add(sp);
       n.__sprite = sp;
       n.__spriteStatus = n.status;
