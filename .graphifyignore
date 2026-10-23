@@ -1,0 +1,3 @@
+# サードパーティの同梱・生成物はグラフから外す
+public/vendor/
+graphify-out/
