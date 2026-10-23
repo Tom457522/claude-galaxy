@@ -513,3 +513,36 @@ dialog select { width: 100%; margin-top: 4px; font-size: 13px; }
 .app-icon-l input { text-align: center; }
 .app-name-l { flex: 1; }
 .btn.danger:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+/* ---- 使用量 ---- */
+.pane-usage { flex: none; font-size: 11px; color: var(--muted); cursor: default; }
+.pane-usage:empty { display: none; }
+
+/* ---- 権限確認の受信箱 ---- */
+.inbox-toggle { margin-left: auto; display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 11px; cursor: pointer; white-space: nowrap; }
+.inbox-toggle input { margin: 0; accent-color: var(--accent); }
+.sidebar.collapsed .inbox-toggle,
+.sidebar.collapsed .side-inbox { display: none; }
+.side-inbox { padding: 8px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; max-height: 50%; overflow-y: auto; flex: none; }
+.inbox-title { color: var(--warn); font-size: 12px; letter-spacing: .04em; }
+.perm {
+  border: 1px solid var(--warn); border-radius: 6px; padding: 6px 8px;
+  background: rgba(229, 181, 103, .07); display: flex; flex-direction: column; gap: 4px; min-width: 0;
+}
+.perm-head { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; }
+.perm-tool { color: var(--warn); }
+.perm-agent { color: var(--muted); border: 1px solid var(--border); border-radius: 8px; padding: 0 5px; font-size: 11px; }
+.perm-sess { color: var(--accent); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.perm-sess:hover { text-decoration: underline; }
+.perm-time { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.perm-desc { color: var(--muted); font-size: 12px; }
+.perm-body {
+  margin: 0; padding: 4px 6px; background: var(--bg); border-radius: 4px; font: 12px/1.4 var(--mono);
+  white-space: pre-wrap; word-break: break-all; max-height: 120px; overflow: auto; color: var(--text);
+}
+.perm-body:empty { display: none; }
+.perm-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.perm-acts .btn { padding: 2px 10px; font-size: 12px; }
+.perm-bar { padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; gap: 6px; flex: none; }
+.perm-bar .perm { flex-direction: row; flex-wrap: wrap; align-items: center; }
+.perm-bar .perm-body { flex: 1 1 240px; max-height: 60px; }
