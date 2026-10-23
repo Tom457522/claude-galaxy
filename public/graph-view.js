@@ -54,7 +54,7 @@
     roots: store.get('gRoots', []),
     mode: 'home',
     focus: null,
-    depth: { home: 2, focus: 4, ...(saved.depth || {}) },
+    depth: { home: 2, focus: 2 }, // 開いたときは毎回 2 から(保存した値は使わない)
     rel: {
       home: { contains: true, import: false, session: true, ...((saved.rel || {}).home || {}) },
       focus: { contains: true, import: true, session: true, ...((saved.rel || {}).focus || {}) },
@@ -91,7 +91,7 @@
   const curRel = () => S.rel[S.mode];
   function persist() {
     store.set('gSettings', {
-      depth: S.depth, rel: S.rel, disabledCats: [...S.f.disabledCats], panelCollapsed: S.panelCollapsed,
+      rel: S.rel, disabledCats: [...S.f.disabledCats], panelCollapsed: S.panelCollapsed,
       f: { searchOnly: S.f.searchOnly, minFiles: S.f.minFiles, onlySessions: S.f.onlySessions, hidden: S.f.hidden, ignored: S.f.ignored, labels: S.f.labels, pin: S.f.pin, color: S.f.color },
     });
   }
