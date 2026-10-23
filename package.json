@@ -4,7 +4,8 @@
   "description": "Claude Code CLI を複数並列で管理するローカルホスト用アプリ",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "license": "MIT",
   "dependencies": {

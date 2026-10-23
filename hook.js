@@ -41,6 +41,11 @@ function slim(p) {
   if (ti && typeof ti === 'object' && (p.tool_name === 'Task' || p.tool_name === 'Agent')) {
     out.task = { description: clip(ti.description, 120), subagent_type: clip(ti.subagent_type, 60) };
   }
+  // 監査ログ用: 実行したツールの対象(ファイルパス・コマンドの先頭など。中身は送らない)
+  if (ti && typeof ti === 'object' && out.hook_event_name === 'PostToolUse') {
+    const v = ti.command || ti.file_path || ti.notebook_path || ti.url || ti.pattern || ti.path || ti.description || '';
+    out.target = clip(String(v), 300);
+  }
   return out;
 }
 

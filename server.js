@@ -5,7 +5,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const crypto = require('crypto');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const pty = require('node-pty');
@@ -16,6 +16,11 @@ const { UsageTracker } = require('./usage');
 const { createJobManager } = require('./jobs');
 const { createAutomations } = require('./automations');
 const { createBus } = require('./bus');
+const cmdline = require('./cmdline');
+const { createAudit, targetOf } = require('./audit');
+const gitx = require('./git');
+const { createTools, claudeMcpServers, claudeExtensions } = require('./tools');
+const dispatch = require('./dispatch');
 
 const IS_WIN = process.platform === 'win32';
 const HOST = '127.0.0.1'; // ローカルホスト限定(外部公開しない)
@@ -58,7 +63,7 @@ const MCP_JS = path.join(__dirname, 'mcp-bus.js');
 const BUS_AUTO_ALLOW = [
   'list_agents', 'read_messages', 'send_message', 'get_job', 'list_jobs', 'memory_read', 'memory_search', 'memory_write',
 ].map((t) => `mcp__galaxy__${t}`);
-const fwd = (p) => p.replace(/\\/g, '/'); // bash / PowerShell / cmd のどれでも通るよう / 区切りにする
+const { fwd } = cmdline;
 
 // このアプリで起動した claude にだけ渡す(--settings)。ユーザーの settings.json は書き換えない。
 function writeHookSettings() {
@@ -78,19 +83,20 @@ function writeHookSettings() {
 
 // エージェントごとの MCP 設定(共有バス)。トークンを含むので本人だけが読めるようにする
 const mcpFile = (id) => path.join(TMP_DIR, `mcp-${PORT}-${id}.json`);
-function writeMcpConfig(id) {
-  if (!settings.busEnabled) return null;
+//   serverIds: 追加で渡す Galaxy 管理の MCP サーバー(null なら「既定で使う」もの)
+function writeMcpConfig(id, serverIds = null) {
+  const servers = tools.configFor(serverIds);
+  if (settings.busEnabled) {
+    servers.galaxy = {
+      type: 'stdio',
+      command: 'node',
+      args: [fwd(MCP_JS)],
+      env: { GALAXY_PORT: String(PORT), GALAXY_TOKEN: HOOK_TOKEN, GALAXY_SESSION: id },
+    };
+  }
+  if (!Object.keys(servers).length) return null;
   const file = mcpFile(id);
-  const conf = {
-    mcpServers: {
-      galaxy: {
-        type: 'stdio',
-        command: 'node',
-        args: [fwd(MCP_JS)],
-        env: { GALAXY_PORT: String(PORT), GALAXY_TOKEN: HOOK_TOKEN, GALAXY_SESSION: id },
-      },
-    },
-  };
+  const conf = { mcpServers: servers };
   fs.mkdirSync(TMP_DIR, { recursive: true });
   fs.writeFileSync(file, JSON.stringify(conf, null, 2), { mode: 0o600 });
   try { fs.chmodSync(file, 0o600); } catch (_) { /* Windows */ }
@@ -100,43 +106,8 @@ function removeMcpConfig(id) {
   try { fs.unlinkSync(mcpFile(id)); } catch (_) { /* ignore */ }
 }
 
-const CLAUDE_SUBCOMMANDS = new Set([
-  'update', 'install', 'doctor', 'mcp', 'plugin', 'plugins', 'auth', 'agents', 'attach', 'logs',
-  'rm', 'stop', 'kill', 'respawn', 'daemon', 'remote-control', 'setup-token', 'purge', 'import',
-  'gateway', 'ultrareview', 'auto-mode', 'self-hosted-runner',
-]);
-
-// 利用者が書いた --resume / --continue を外す(再開時はこちらで ID を指定するため)
-function stripResumeFlags(rest) {
-  return rest
-    .replace(/(^|\s)(--continue|-c)(?=\s|$)/g, '$1')
-    .replace(/(^|\s)(--resume|-r)(=|\s+)(?!-)("[^"]*"|\S+)/g, '$1')
-    .replace(/(^|\s)(--resume|-r)(?=\s|$)/g, '$1');
-}
-
-const SAFE_ID = /^[A-Za-z0-9_-]{8,100}$/;
-
-// 起動コマンドが claude の対話起動なら、先頭語の直後に --settings を差し込む
-//   resumeId を渡すと、--resume <id> も付ける(会話の再開)。mcp を渡すと --mcp-config も付ける
-function injectSettings(cmdline, resumeId, mcp) {
-  const m = /^("[^"]+"|\S+)([\s\S]*)$/.exec(cmdline.trim());
-  if (!m) return { cmd: cmdline, injected: false };
-  const first = m[1].replace(/^"|"$/g, '');
-  const base = path.basename(first.replace(/\\/g, '/')).toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '');
-  if (base !== 'claude') return { cmd: cmdline, injected: false };
-  let rest = m[2];
-  if (/(^|\s)--settings(\s|=)/.test(rest)) return { cmd: cmdline, injected: false }; // 利用者が自分で指定済み
-  const next = rest.trim().split(/\s+/)[0];
-  if (next && CLAUDE_SUBCOMMANDS.has(next)) return { cmd: cmdline, injected: false };
-  let resume = '';
-  if (resumeId && SAFE_ID.test(resumeId)) {
-    rest = stripResumeFlags(rest);
-    resume = ` --resume ${resumeId}`;
-  }
-  // --mcp-config は複数の値を取るので、直後に --settings を置いて区切る
-  const mcpArg = mcp ? ` --mcp-config "${fwd(mcp)}"` : '';
-  return { cmd: `${m[1]}${mcpArg} --settings "${fwd(SETTINGS_FILE)}"${resume}${rest}`, injected: true, resumed: !!resume };
-}
+const SAFE_ID = cmdline.SAFE_ID;
+const injectSettings = (cmd, resumeId, mcp) => cmdline.injectSettings(cmd, { settingsFile: SETTINGS_FILE, resumeId, mcp });
 
 const app = express();
 
@@ -160,6 +131,13 @@ const sessions = new Map();
 let seq = 0;
 let settings = store.loadSettings();
 let shuttingDown = false;
+const audit = createAudit({ getSettings: () => settings });
+let auditTimer = null;
+audit.onEntry(() => { // 記録タブに「増えた」とだけ知らせる(まとめて)
+  if (auditTimer) return;
+  auditTimer = setTimeout(() => { auditTimer = null; broadcast('audit', {}); }, 1000);
+});
+const tools = createTools();
 
 // ---- 永続化 ----
 const persistInfo = (s) => ({
@@ -172,6 +150,8 @@ const persistInfo = (s) => ({
   claudeSessionId: s.claudeSessionId,
   transcripts: s.usage.files(),
   usage: s.usage.totals,
+  worktree: s.worktree,
+  mcpServers: s.mcpServers,
 });
 const persist = (opts) => store.save(() => [...sessions.values()].map(persistInfo), opts);
 
@@ -258,6 +238,8 @@ const publicInfo = (s) => ({
   resumable: !!s.claudeSessionId && isClaudeCommand(s.command),
   restored: s.restored,
   usage: s.usage.totals,
+  worktree: s.worktree,
+  mcpServers: s.mcpServers,
   permissions: [...permissions.values()].filter((x) => x.sessionId === s.id).length,
   unread: bus.unreadCount(s.id),
 });
@@ -288,11 +270,18 @@ function applyHook(s, p) {
   const now = Date.now();
   trackTranscript(s, p);
   clearStalePermissions(s, p);
+  if (ev === 'PostToolUse') {
+    audit.log({
+      agent: s.id, agentName: s.name, kind: 'tool', tool: p.tool_name, target: p.target, cwd: s.cwd,
+      detail: inSub ? `サブエージェント ${p.agent_type || ''}` : '',
+    });
+  }
   s.pendingAgents = s.pendingAgents.filter((x) => now - x.at < 60000);
 
   switch (ev) {
     case 'SessionStart':
       setStatus(s, 'idle');
+      sendPendingPrompt(s);
       break;
 
     case 'UserPromptSubmit':
@@ -371,9 +360,7 @@ function applyHook(s, p) {
 }
 
 // Claude Code の対話起動か(hooks を差し込めるか)
-function isClaudeCommand(cmdline) {
-  return injectSettings(cmdline || '').injected;
-}
+const isClaudeCommand = cmdline.isClaudeCommand;
 
 // Claude のセッション ID とトランスクリプトの場所を覚える(再開とコスト集計に使う)
 function trackTranscript(s, p) {
@@ -420,6 +407,9 @@ function newSessionObject({ id, name, cwd, command, appId, createdAt }) {
     usage: new UsageTracker(),
     usageTimer: null,
     restored: false,
+    worktree: null, // { repo, path, cwd, branch, base, origCwd }
+    mcpServers: null, // 追加の MCP サーバー(null なら既定)
+    pendingPrompt: '', // 起動したら最初に入力するプロンプト(窓口から)
     // 状態
     injected: false,
     hooked: false,
@@ -449,7 +439,7 @@ function spawnSession(session, { resume = false } = {}) {
   const shell = IS_WIN ? (process.env.COMSPEC || 'cmd.exe') : (process.env.SHELL || '/bin/bash');
   assertCommandExists(session.command, shell, session.cwd);
 
-  const mcp = isClaudeCommand(session.command) ? writeMcpConfig(session.id) : null;
+  const mcp = isClaudeCommand(session.command) ? writeMcpConfig(session.id, session.mcpServers) : null;
   const { cmd: finalCmd, injected, resumed } = injectSettings(session.command, resume ? session.claudeSessionId : null, mcp);
   if (resume && !resumed) throw new Error('このセッションは再開できません(Claude のセッション ID が記録されていません)');
 
@@ -506,6 +496,7 @@ function spawnSession(session, { resume = false } = {}) {
     cancelPermissions(session.id);
     for (const a of session.agents) if (a.status === 'running') { a.status = 'stopped'; a.endedAt = Date.now(); }
     setStatus(session, 'exited', `code ${exitCode}`);
+    audit.log({ agent: session.id, agentName: session.name, kind: 'session-exit', detail: `code ${exitCode}`, cwd: session.cwd });
     for (const ws of session.clients) {
       if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'exit', exitCode }));
     }
@@ -515,7 +506,7 @@ function spawnSession(session, { resume = false } = {}) {
   });
 }
 
-function createSession({ name, cwd, command, appId, resumeId }) {
+function createSession({ name, cwd, command, appId, resumeId, worktree, mcpServers, prompt }) {
   const id = `s${++seq}`;
   const session = newSessionObject({
     id,
@@ -525,11 +516,38 @@ function createSession({ name, cwd, command, appId, resumeId }) {
     appId,
   });
   if (resumeId) session.claudeSessionId = resumeId;
-  spawnSession(session, { resume: !!resumeId });
+  if (Array.isArray(mcpServers)) session.mcpServers = mcpServers.filter((x) => typeof x === 'string');
+  if (typeof prompt === 'string' && prompt.trim()) session.pendingPrompt = prompt.trim().slice(0, 20000);
+  // 別ブランチの作業コピー(worktree)で起動する
+  if (worktree) {
+    const wt = gitx.createWorktree(session.cwd, id, settings.worktreeDir);
+    session.worktree = { ...wt, origCwd: session.cwd };
+    session.cwd = wt.cwd;
+  }
+  try {
+    spawnSession(session, { resume: !!resumeId });
+  } catch (e) {
+    if (session.worktree) { try { gitx.removeWorktree(session.worktree, { force: true }); } catch (_) { /* ignore */ } }
+    throw e;
+  }
   sessions.set(id, session);
+  audit.log({
+    agent: id, agentName: session.name, kind: 'session-start', cwd: session.cwd,
+    detail: [session.command, session.worktree && `worktree ${session.worktree.branch}`, resumeId && `resume ${resumeId}`].filter(Boolean).join(' / '),
+  });
   emit(session);
   persist();
+  // 通常は SessionStart(hook)で入力する。hook が来ない場合に備えて、少し待ってからも入力する(1 回だけ)
+  if (session.pendingPrompt) setTimeout(() => sendPendingPrompt(session), session.injected ? 8000 : 3000);
   return session;
+}
+
+// 窓口から起動したセッションに、最初のプロンプトを入力する
+function sendPendingPrompt(s) {
+  const text = s.pendingPrompt;
+  if (!text || !s.alive) return;
+  s.pendingPrompt = '';
+  setTimeout(() => { if (s.alive) typeInto(s, text); }, 800);
 }
 
 // 終了したセッションを同じ ID のまま起動し直す(resume: 会話を引き継ぐ)
@@ -562,6 +580,8 @@ function restoreSessions() {
     if (typeof r.claudeSessionId === 'string' && SAFE_ID.test(r.claudeSessionId)) s.claudeSessionId = r.claudeSessionId;
     for (const f of Array.isArray(r.transcripts) ? r.transcripts : []) s.usage.addFile(f);
     if (r.usage && typeof r.usage === 'object') s.usage.totals = { ...s.usage.totals, ...r.usage };
+    if (r.worktree && typeof r.worktree === 'object') s.worktree = r.worktree;
+    if (Array.isArray(r.mcpServers)) s.mcpServers = r.mcpServers;
     s.restored = true;
     s.injected = isClaudeCommand(s.command);
     s.buffer = store.readLogTail(s.id, SCROLLBACK_LIMIT);
@@ -593,12 +613,17 @@ const permInfo = (x) => ({
     : [])),
 });
 
-function resolvePermission(id, decision) {
+// why: 'user'(受信箱で答えた)/ 'timeout'(待ち時間切れ)のときは監査ログに残す
+function resolvePermission(id, decision, why = '') {
   const x = permissions.get(id);
   if (!x) return false;
   permissions.delete(id);
   clearTimeout(x.timer);
   if (!x.res.writableEnded) x.res.json(decision);
+  if (why) {
+    const label = { allow: decision.updatedPermissions ? '許可(今後も)' : '許可', deny: '拒否', ask: why === 'timeout' ? '時間切れ' : 'ターミナルで回答' }[decision.behavior];
+    audit.log({ agent: x.sessionId, agentName: agentName(x.sessionId), kind: 'permission', tool: x.tool, target: targetOf(x.input), detail: label });
+  }
   broadcast('permission-removed', { id });
   const s = sessions.get(x.sessionId);
   if (s) {
@@ -636,7 +661,7 @@ const MAX_AGENT_JOBS = 20; // エージェントが登録した、待ち・実�
 function buildJobCommand(job) {
   const m = /^("[^"]+"|\S+)([\s\S]*)$/.exec(JOB_COMMAND);
   const args = ['-p', '--output-format stream-json', '--verbose'];
-  const mcp = writeMcpConfig(job.id);
+  const mcp = writeMcpConfig(job.id, job.mcpServers);
   if (mcp) args.push(`--mcp-config "${fwd(mcp)}"`);
   args.push(`--settings "${fwd(SETTINGS_FILE)}"`);
   if (job.model) args.push(`--model ${job.model}`);
@@ -657,9 +682,26 @@ const jobs = createJobManager({
   getMaxConcurrent: () => settings.maxConcurrentJobs,
   onChange: (j) => broadcast('job', j),
   onRemove: (id) => broadcast('job-removed', { id }),
+  // 起動直前: worktree を指定されていれば作り、その中で動かす
+  prepare: (j) => {
+    if (j.worktree && !j.worktreeInfo) {
+      const wt = gitx.createWorktree(j.cwd, j.id, settings.worktreeDir);
+      j.worktreeInfo = { ...wt, origCwd: j.cwd };
+      j.cwd = wt.cwd;
+    }
+    audit.log({
+      agent: j.id, agentName: j.name, kind: 'job-start', cwd: j.cwd,
+      detail: [j.model, j.permissionMode, j.worktreeInfo && `worktree ${j.worktreeInfo.branch}`, j.source !== 'ui' && `${j.source}${j.parent ? ` ${j.parent}` : ''}`].filter(Boolean).join(' / '),
+    });
+  },
+  onToolUse: (j, name, input) => audit.log({ agent: j.id, agentName: j.name, kind: 'tool', tool: name, target: targetOf(input), cwd: j.cwd }),
   onFinish: (j) => {
     cancelPermissions(j.id);
     removeMcpConfig(j.id);
+    audit.log({
+      agent: j.id, agentName: j.name, kind: 'job-end', cwd: j.cwd,
+      detail: `${j.status}${j.costUsd ? ` $${j.costUsd.toFixed(4)}` : ''}${j.error ? ` ${j.error.slice(0, 200)}` : ''}`,
+    });
     // 登録したエージェントに結果を知らせる(メッセージとして)
     if (j.parent && j.source === 'agent') {
       const text = `ジョブ ${j.id}「${j.name}」が${j.status === 'done' ? '完了' : `終了(${j.status})`}しました。` +
@@ -814,6 +856,17 @@ async function busCall(from, tool, a) {
   }
 }
 
+// 一覧から消すときの worktree の片付け: 変更が残っていなければ消す(ブランチは残す)。残っていれば触らない
+function cleanupWorktree(id, name, wt) {
+  if (!wt || wt.removed) return;
+  try {
+    gitx.removeWorktree(wt);
+    audit.log({ agent: id, agentName: name, kind: 'worktree-remove', target: wt.path, detail: `一覧から削除したため(branch ${wt.branch} は残しました)` });
+  } catch (e) {
+    audit.log({ agent: id, agentName: name, kind: 'worktree-remove', target: wt.path, detail: `変更が残っているため残しました: ${e.message.slice(0, 120)}` });
+  }
+}
+
 // ---- REST API ----
 app.get('/api/sessions', (_req, res) => {
   res.json([...sessions.values()].map(publicInfo));
@@ -821,8 +874,8 @@ app.get('/api/sessions', (_req, res) => {
 
 app.post('/api/sessions', (req, res) => {
   try {
-    const { name, cwd, command, appId } = req.body || {};
-    const s = createSession({ name, cwd, command, appId });
+    const { name, cwd, command, appId, worktree, mcpServers } = req.body || {};
+    const s = createSession({ name, cwd, command, appId, worktree: !!worktree, mcpServers });
     res.status(201).json(publicInfo(s));
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -854,6 +907,8 @@ app.delete('/api/sessions/:id', (req, res) => {
   sessions.delete(s.id);
   store.removeLog(s.id);
   removeMcpConfig(s.id);
+  // プロセスが終わってから片付ける(使用中のフォルダは消せないことがあるため)
+  if (s.worktree && !s.worktree.removed) setTimeout(() => cleanupWorktree(s.id, s.name, s.worktree), 1500);
   persist();
   broadcast('removed', { id: s.id });
   res.status(204).end();
@@ -888,7 +943,7 @@ app.post('/api/permissions/:id', (req, res) => {
   } else {
     decision = { behavior: 'ask' }; // ターミナルの確認ダイアログで答える
   }
-  resolvePermission(x.id, decision);
+  resolvePermission(x.id, decision, 'user');
   res.status(204).end();
 });
 
@@ -898,6 +953,12 @@ app.put('/api/settings', (req, res) => {
   if (typeof b.permissionInbox === 'boolean') settings.permissionInbox = b.permissionInbox;
   if (typeof b.busEnabled === 'boolean') settings.busEnabled = b.busEnabled;
   if (Number.isFinite(b.maxConcurrentJobs)) settings.maxConcurrentJobs = Math.min(10, Math.max(1, Math.round(b.maxConcurrentJobs)));
+  if (typeof b.auditEnabled === 'boolean') settings.auditEnabled = b.auditEnabled;
+  if (Number.isFinite(b.auditDays)) settings.auditDays = Math.min(365, Math.max(1, Math.round(b.auditDays)));
+  if (typeof b.worktreeDir === 'string') {
+    try { settings.worktreeDir = b.worktreeDir.trim() ? resolveCwd(b.worktreeDir) : ''; } catch (e) { return res.status(400).json({ error: e.message }); }
+  }
+  if (typeof b.dispatchModel === 'string' && /^[A-Za-z0-9._-]{0,40}$/.test(b.dispatchModel.trim())) settings.dispatchModel = b.dispatchModel.trim();
   jobs.pump();
   try { store.saveSettings(settings); } catch (e) { return res.status(500).json({ error: e.message }); }
   if (!settings.permissionInbox) for (const x of [...permissions.values()]) resolvePermission(x.id, { behavior: 'ask' });
@@ -918,7 +979,11 @@ app.get('/api/jobs', wrap(() => ({ jobs: jobs.list(), maxConcurrent: settings.ma
 app.post('/api/jobs', wrap((req) => jobs.create(req.body || {}, { source: 'ui' })));
 app.post('/api/jobs/:id/cancel', wrap((req) => { jobs.cancel(req.params.id); }));
 app.post('/api/jobs/:id/retry', wrap((req) => jobs.retry(req.params.id)));
-app.delete('/api/jobs/:id', wrap((req) => { if (!jobs.remove(req.params.id)) throw new Error('見つかりません'); }));
+app.delete('/api/jobs/:id', wrap((req) => {
+  const j = jobs.get(req.params.id);
+  if (!j || !jobs.remove(req.params.id)) throw new Error('見つかりません');
+  if (j.worktreeInfo && !j.worktreeInfo.removed) setTimeout(() => cleanupWorktree(j.id, j.name, j.worktreeInfo), 1500);
+}));
 app.get('/api/jobs/:id/transcript', wrap((req) => jobs.transcript(req.params.id)));
 // ジョブの会話を、対話セッションとして開く(claude --resume)
 app.post('/api/jobs/:id/open', wrap((req) => {
@@ -968,6 +1033,133 @@ app.put('/api/board/memory', wrap((req) => {
   return bus.memWrite(b.key, b.value, { tags: b.tags, author: 'あなた' });
 }));
 app.delete('/api/board/memory', wrap((req) => { if (!bus.memDelete(String(req.query.key || ''))) throw new Error('見つかりません'); }));
+
+// ---- 監査ログ・差分・worktree ----
+app.get('/api/audit', wrap((req) => audit.query({
+  days: Number(req.query.days) || 2,
+  agent: String(req.query.agent || ''),
+  kind: String(req.query.kind || ''),
+  q: String(req.query.q || ''),
+  limit: Math.min(5000, Number(req.query.limit) || 1000),
+})));
+
+// エージェント(セッション / ジョブ)の作業場所と、差分の起点
+function agentWorkspace(id) {
+  const s = sessions.get(id);
+  if (s) return { cwd: s.cwd, worktree: s.worktree, alive: s.alive, kind: 'session', name: s.name };
+  const j = jobs.get(id);
+  if (j) return { cwd: j.cwd, worktree: j.worktreeInfo, alive: j.status === 'running', kind: 'job', name: j.name };
+  throw new Error('エージェントが見つかりません');
+}
+
+app.get('/api/diff', wrap((req) => {
+  const w = agentWorkspace(String(req.query.agent || ''));
+  if (w.worktree && w.worktree.removed) return { repo: null, error: 'worktree は削除済みです(ブランチ ' + w.worktree.branch + ' は残っています)', worktree: w.worktree };
+  if (!fs.existsSync(w.cwd)) return { repo: null, error: `フォルダがありません: ${w.cwd}` };
+  return { ...gitx.diff(w.cwd, w.worktree ? w.worktree.base : null), worktree: w.worktree || null, name: w.name };
+}));
+
+app.post('/api/worktree/remove', wrap((req) => {
+  const id = String(req.body?.agent || '');
+  const w = agentWorkspace(id);
+  if (!w.worktree || w.worktree.removed) throw new Error('worktree はありません');
+  if (w.alive) throw new Error('実行中は削除できません。終了してから削除してください');
+  const r = gitx.removeWorktree(w.worktree, { force: !!req.body?.force });
+  const info = { ...w.worktree, removed: true, removedAt: Date.now() };
+  if (w.kind === 'session') { const s = sessions.get(id); s.worktree = info; emit(s); persist(); } else jobs.patch(id, { worktreeInfo: info });
+  audit.log({ agent: id, agentName: w.name, kind: 'worktree-remove', target: w.worktree.path, detail: `branch ${w.worktree.branch} は残しました` });
+  return r;
+}));
+
+// ---- ツール(MCP サーバー・skills など)----
+// claude コマンドを 1 回だけ実行して出力を返す(ジョブと同じく、ログインシェル経由で PATH を引き継ぐ)
+function runClaude(args, { cwd, input = '', timeoutMs = 60000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const cmd = `${JOB_COMMAND} ${args}`;
+    const proc = IS_WIN
+      ? spawn(SHELL, ['/d', '/s', '/c', `"${cmd}"`], { cwd, windowsVerbatimArguments: true, windowsHide: true })
+      : spawn(SHELL, ['-l', '-c', `exec ${cmd}`], { cwd });
+    let out = '';
+    let err = '';
+    const timer = setTimeout(() => { try { proc.kill(); } catch (_) { /* ignore */ } reject(new Error(`${Math.round(timeoutMs / 1000)} 秒以内に終わりませんでした`)); }, timeoutMs);
+    proc.stdout.on('data', (c) => { out += c; });
+    proc.stderr.on('data', (c) => { err += c; });
+    proc.on('error', (e) => { clearTimeout(timer); reject(e); });
+    proc.on('close', (code) => { clearTimeout(timer); resolve({ code, out, err }); });
+    proc.stdin.on('error', () => { /* ignore */ });
+    proc.stdin.end(input);
+  });
+}
+
+app.get('/api/tools', wrap((req) => {
+  let cwd = null;
+  try { cwd = req.query.cwd ? resolveCwd(String(req.query.cwd)) : null; } catch (_) { cwd = null; }
+  return { servers: tools.list(), claudeServers: claudeMcpServers(cwd), extensions: claudeExtensions(cwd), cwd };
+}));
+app.post('/api/tools/servers', wrap((req) => tools.create(req.body || {})));
+app.put('/api/tools/servers/:id', wrap((req) => {
+  const r = tools.update(req.params.id, req.body || {});
+  if (!r) throw new Error('見つかりません');
+  return r;
+}));
+app.delete('/api/tools/servers/:id', wrap((req) => { if (!tools.remove(req.params.id)) throw new Error('見つかりません'); }));
+app.post('/api/tools/servers/:id/check', async (req, res) => {
+  try { res.json(await tools.check(req.params.id)); } catch (e) { res.status(400).json({ error: e.message }); }
+});
+// Claude Code 自身の「claude mcp list」(接続確認つき)
+app.post('/api/tools/claude-mcp-list', async (req, res) => {
+  try {
+    const cwd = resolveCwd(String(req.body?.cwd || ''));
+    assertCommandExists(JOB_COMMAND, SHELL, cwd);
+    const r = await runClaude('mcp list', { cwd, timeoutMs: 90000 });
+    res.json({ cwd, output: `${r.out}${r.err ? `\n${r.err}` : ''}`.trim(), code: r.code });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ---- 窓口(やりたいことから実行案を作る)----
+app.post('/api/dispatch/plan', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const roots = Array.isArray(b.roots) ? b.roots.filter((x) => typeof x === 'string').slice(0, 10) : [];
+    const recent = [...new Set([
+      ...[...sessions.values()].sort((x, y) => y.createdAt - x.createdAt).map((x) => (x.worktree ? x.worktree.origCwd : x.cwd)),
+      ...jobs.list().sort((x, y) => y.createdAt - x.createdAt).map((j) => (j.worktreeInfo ? j.worktreeInfo.origCwd : j.cwd)),
+    ])].slice(0, 15);
+    let ask = null;
+    if (b.useClaude !== false) {
+      try {
+        assertCommandExists(JOB_COMMAND, SHELL, os.homedir());
+        const model = /^[A-Za-z0-9._-]{1,40}$/.test(settings.dispatchModel || '') ? settings.dispatchModel : 'haiku';
+        ask = async (prompt) => {
+          // ツールなし・保存なし・hooks なし(--settings を渡さない)で 1 回だけ答えさせる
+          const r = await runClaude(`-p --output-format json --model ${model} --tools "" --no-session-persistence --strict-mcp-config`, { cwd: os.homedir(), input: prompt, timeoutMs: 90000 });
+          let j = null;
+          try { j = JSON.parse(r.out); } catch (_) { /* ignore */ }
+          if (!j || j.is_error) throw new Error((j && (j.result || j.subtype)) || r.err.trim().split('\n').pop() || `終了コード ${r.code}`);
+          return j.result;
+        };
+      } catch (_) { ask = null; }
+    }
+    res.json(await dispatch.plan(b.text, { roots, recent, fallbackCwd: os.homedir(), ask }));
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.post('/api/dispatch/run', wrap((req) => {
+  const p = req.body || {};
+  const prompt = String(p.prompt || '').trim();
+  if (!prompt) throw new Error('プロンプトが空です');
+  const mcpServers = Array.isArray(p.mcpServers) ? p.mcpServers : undefined;
+  let out;
+  if (p.mode === 'job') {
+    out = { kind: 'job', job: jobs.create({ name: p.name, prompt, cwd: p.cwd, model: p.model, permissionMode: p.permissionMode || '', worktree: !!p.worktree, priority: p.priority, mcpServers }, { source: 'ui' }) };
+  } else {
+    const cmd = isClaudeCommand(DEFAULT_COMMAND) ? DEFAULT_COMMAND : JOB_COMMAND;
+    const modelArg = p.model && /^[A-Za-z0-9._:-]{1,40}$/.test(p.model) ? ` --model ${p.model}` : '';
+    out = { kind: 'session', session: publicInfo(createSession({ name: p.name, cwd: p.cwd, command: cmd + modelArg, worktree: !!p.worktree, prompt, mcpServers })) };
+  }
+  audit.log({ agent: out.kind === 'job' ? out.job.id : out.session.id, agentName: p.name, kind: 'dispatch', target: prompt.slice(0, 300), detail: `${out.kind}${p.worktree ? ' / worktree' : ''}` });
+  return out;
+}));
 
 app.get('/api/defaults', (_req, res) => {
   // ホーム画面(グラフ)のルート候補: ホーム、このアプリの親フォルダ、いま動いているセッションの作業フォルダ
@@ -1080,7 +1272,7 @@ app.post('/api/permission', (req, res) => {
     res,
     timer: null,
   };
-  x.timer = setTimeout(() => resolvePermission(id, { behavior: 'ask' }), PERMISSION_WAIT * 1000);
+  x.timer = setTimeout(() => resolvePermission(id, { behavior: 'ask' }, 'timeout'), PERMISSION_WAIT * 1000);
   // hook 側が先に終わった(Claude 側で中断された等)ら片付ける
   res.on('close', () => { if (permissions.has(id)) resolvePermission(id, { behavior: 'ask' }); });
   permissions.set(id, x);
@@ -1160,6 +1352,7 @@ function shutdown() {
     if (s.alive) { try { s.proc.kill(); } catch (_) { /* ignore */ } }
   }
   jobs.shutdown();
+  audit.close();
   for (const f of fs.readdirSync(TMP_DIR)) if (f.startsWith(`mcp-${PORT}-`)) removeMcpConfig(f.slice(`mcp-${PORT}-`.length, -5));
   store.closeAll();
   process.exit(0);

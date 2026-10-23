@@ -145,7 +145,7 @@ function mascotImageURL(status) {
 }
 
 // ---------- タブ ----------
-const TABS = ['home', 'apps', 'term', 'jobs', 'board'];
+const TABS = ['home', 'apps', 'term', 'jobs', 'board', 'audit', 'tools'];
 let curTab = TABS.includes(localStorage.getItem('tab')) ? localStorage.getItem('tab') : 'home';
 
 function setTab(tab) {
@@ -156,6 +156,10 @@ function setTab(tab) {
   $('#apps').classList.toggle('hidden', tab !== 'apps');
   $('#jobs').classList.toggle('hidden', tab !== 'jobs');
   $('#board').classList.toggle('hidden', tab !== 'board');
+  $('#audit').classList.toggle('hidden', tab !== 'audit');
+  $('#tools').classList.toggle('hidden', tab !== 'tools');
+  if (tab === 'audit') window.AuditView.show(); else window.AuditView.hide();
+  if (tab === 'tools') window.ToolsView.show();
   $('#layout-wrap').classList.toggle('hidden', tab !== 'term');
   if (tab === 'home') window.GraphView.show(); else window.GraphView.hide();
   if (tab === 'board') window.BoardView.show(); else window.BoardView.hide();
@@ -205,6 +209,8 @@ class Pane {
         <span class="pane-state"></span>
         <span class="pane-cwd"></span>
         <span class="pane-usage"></span>
+        <span class="pane-wt hidden"></span>
+        <button class="icon-btn diff" title="作業場所の差分(git diff)">±</button>
         <button class="icon-btn max" title="最大化 / 元に戻す">⤢</button>
         <button class="icon-btn close" title="セッションを終了">✕</button>
       </div>
@@ -216,6 +222,7 @@ class Pane {
     this.cwdEl = this.el.querySelector('.pane-cwd');
     this.usageEl = this.el.querySelector('.pane-usage');
     this.permEl = this.el.querySelector('.perm-bar');
+    this.wtEl = this.el.querySelector('.pane-wt');
     this.wrap = this.el.querySelector('.term-wrap');
 
     this.term = new Terminal({
@@ -252,6 +259,7 @@ class Pane {
 
     this.el.addEventListener('mousedown', () => setFocus(this.id));
     this.el.querySelector('.max').addEventListener('click', () => toggleMax(this.id));
+    this.el.querySelector('.diff').addEventListener('click', () => window.DiffView.open(this.id));
     this.el.querySelector('.close').addEventListener('click', () => closeSession(this.id));
     this.titleEl.addEventListener('dblclick', () => this.startRename());
 
@@ -285,6 +293,12 @@ class Pane {
     this.cwdEl.textContent = `${this.info.cwd}  ·  ${this.info.command}`;
     this.cwdEl.title = this.cwdEl.textContent;
     this.stateEl.textContent = STATUS_LABEL[st];
+    const wt = this.info.worktree;
+    this.wtEl.classList.toggle('hidden', !wt);
+    if (wt) {
+      this.wtEl.textContent = `⑂ ${wt.branch}${wt.removed ? '(削除済み)' : ''}`;
+      this.wtEl.title = `worktree: ${wt.path}\n元のフォルダ: ${wt.origCwd}`;
+    }
     const u = this.info.usage;
     this.usageEl.textContent = usageTokens(u) ? fmtCost(u.cost) : '';
     this.usageEl.title = usageTip(u);
@@ -703,8 +717,8 @@ function removePane(id) {
   renderSummary();
 }
 
-async function addSession({ name, cwd, command, appId }) {
-  const info = await api('POST', '/api/sessions', { name, cwd, command, appId });
+async function addSession({ name, cwd, command, appId, worktree, mcpServers }) {
+  const info = await api('POST', '/api/sessions', { name, cwd, command, appId, worktree, mcpServers });
   if (!panes.has(info.id)) onSession(info); // SSE より先に応答が届いた場合に備える
   setFocus(info.id);
   return panes.get(info.id);
@@ -736,6 +750,8 @@ async function openDialog(prefill = {}) {
   $('#f-cwd').value = hasCwd ? prefill.cwd : ((app && app.cwd) || localStorage.getItem('lastCwd') || defaults.cwd || '');
   $('#f-cmd').value = prefill.command || (app && app.command) || localStorage.getItem('lastCmd') || defaults.command || 'claude';
   $('#dlg-error').classList.add('hidden');
+  $('#f-worktree').checked = false;
+  $('#f-mcp').innerHTML = window.ToolsView.pickerHtml(null);
   dlg.showModal();
   (hasCwd || prefill.appId ? $('#f-cwd') : $('#f-name')).focus();
 }
@@ -772,7 +788,10 @@ $('#dlg-form').addEventListener('submit', async (e) => {
   const command = $('#f-cmd').value.trim();
   const appId = $('#f-app').value || undefined;
   try {
-    await addSession({ name: $('#f-name').value.trim(), cwd, command, appId });
+    await addSession({
+      name: $('#f-name').value.trim(), cwd, command, appId,
+      worktree: $('#f-worktree').checked, mcpServers: window.ToolsView.pickerValue($('#f-mcp')),
+    });
     localStorage.setItem('lastApp', appId || '');
     localStorage.setItem('lastCwd', cwd);
     localStorage.setItem('lastCmd', command);
@@ -847,12 +866,15 @@ function connectEvents() {
     inboxToggle.checked = !!st.permissionInbox;
     window.JobsView.onSettings(st);
     window.BoardView.onSettings(st);
+    window.AuditView.onSettings(st);
+    window.ToolsView.onSettings(st);
   });
   es.addEventListener('job', (e) => window.JobsView.onJob(JSON.parse(e.data)));
   es.addEventListener('job-removed', (e) => window.JobsView.onJobRemoved(JSON.parse(e.data).id));
   es.addEventListener('automation', (e) => window.JobsView.onAutomation(JSON.parse(e.data)));
   es.addEventListener('automation-removed', (e) => window.JobsView.onAutomationRemoved(JSON.parse(e.data).id));
   es.addEventListener('board', (e) => window.BoardView.onChange(JSON.parse(e.data)));
+  es.addEventListener('audit', () => window.AuditView.onEntry());
   es.onopen = () => { resync(); resyncPermissions(); window.JobsView.resync(); window.BoardView.resync(); }; // 切断→再接続時に取りこぼしを補う
 }
 
@@ -875,11 +897,19 @@ function connectEvents() {
     onOpenSession: (info) => { onSession(info); setTab('term'); setFocus(info.id); },
   });
   await window.BoardView.init({ onUnread: (n) => setBadge('#tab-board-badge', n) });
+  window.AuditView.init();
+  await window.ToolsView.init();
+  window.DispatchView.init({
+    onSession: (info) => { onSession(info); setTab('term'); setFocus(info.id); },
+    onJob: (j) => { window.JobsView.onJob(j); setTab('jobs'); },
+  });
   await resync();
   api('GET', '/api/settings').then((st) => {
     inboxToggle.checked = !!st.permissionInbox;
     window.JobsView.onSettings(st);
     window.BoardView.onSettings(st);
+    window.AuditView.onSettings(st);
+    window.ToolsView.onSettings(st);
   }).catch(() => {});
   const first = [...panes.keys()][0];
   if (first && !focusedId) setFocus(first);
