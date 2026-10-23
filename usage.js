@@ -11,7 +11,8 @@ const os = require('os');
 
 const PRICING_FILE = path.join(os.homedir(), '.claude-galaxy', 'pricing.json');
 
-// $/100万トークン。cacheWrite / cacheRead を省略したものは input の 1.25 倍 / 0.1 倍で計算する。
+// $/100万トークン。cacheWrite(5 分キャッシュ)/ cacheWrite1h(1 時間キャッシュ)/ cacheRead を省略したものは
+// input の 1.25 倍 / 2 倍 / 0.1 倍で計算する。
 // 先頭一致で、より長い接頭辞が優先される。
 const DEFAULT_PRICING = {
   'claude-fable-5-1': { input: 10, output: 50, cacheRead: 0.25 },
@@ -57,9 +58,14 @@ function costOf(model, u) {
   const p = priceFor(model);
   if (!p) return null;
   const cw = p.cacheWrite ?? p.input * 1.25;
+  const cw1h = p.cacheWrite1h ?? p.input * 2;
+  const long = Math.min(u.cacheWrite1h || 0, u.cacheWrite); // cacheWrite のうち 1 時間キャッシュの分
   const cr = p.cacheRead ?? p.input * 0.1;
-  return (u.input * p.input + u.output * p.output + u.cacheWrite * cw + u.cacheRead * cr) / 1e6;
+  return (u.input * p.input + u.output * p.output + (u.cacheWrite - long) * cw + long * cw1h + u.cacheRead * cr) / 1e6;
 }
+
+// 額が記録に付いていればそれ(クラウドセッションの Claude Code 自身の計算)、無ければ単価から
+const costFor = (m) => (Number.isFinite(m.cost) ? m.cost : costOf(m.model, m));
 
 const MAX_READ = 64 * 1024 * 1024; // 1回に読む上限(巨大ファイル対策)
 
@@ -106,6 +112,7 @@ class TranscriptReader {
         input: u.input_tokens || 0,
         output: u.output_tokens || 0,
         cacheWrite: u.cache_creation_input_tokens || 0,
+        cacheWrite1h: cache1h(u),
         cacheRead: u.cache_read_input_tokens || 0,
       });
       changed = true;
@@ -113,6 +120,9 @@ class TranscriptReader {
     return changed;
   }
 }
+
+// 書き込んだキャッシュのうち 1 時間キャッシュの分(Claude Code はサブスクリプションで 1 時間キャッシュを使う)
+const cache1h = (u) => (u.cache_creation && u.cache_creation.ephemeral_1h_input_tokens) || 0;
 
 const emptyTotals = () => ({ input: 0, output: 0, cacheWrite: 0, cacheRead: 0, cost: 0, unpriced: 0, models: {} });
 
@@ -175,7 +185,8 @@ const dayKey = (t) => { const d = new Date(t); return `${d.getFullYear()}-${pad(
 const FAMILIES = ['opus', 'sonnet', 'haiku', 'fable'];
 const familyOf = (model) => FAMILIES.find((f) => String(model || '').toLowerCase().includes(f)) || 'other';
 
-function createUsageScanner({ dir = projectsDir() } = {}) {
+// extra: ほかの出どころ(クラウドセッションなど)の応答を { id, session, cwd, m } で返す関数
+function createUsageScanner({ dir = projectsDir(), extra = () => [] } = {}) {
   const readers = new Map(); // file -> { reader, session, project }
 
   function scan() {
@@ -200,10 +211,36 @@ function createUsageScanner({ dir = projectsDir() } = {}) {
     if (!readers.has(file)) readers.set(file, { reader: new TranscriptReader(file), session, project });
   }
 
-  // days 日分(今日を含む)を日別・モデル別・プロジェクト別・セッション別にまとめる
-  function report({ days = 30, now = Date.now() } = {}) {
-    days = Math.min(Math.max(Math.floor(Number(days)) || 30, 1), 365);
+  // すべての応答を 1 回ずつ返す(source: 'local' | 'cloud' | 'all')。
+  // クラウドのセッションを手元に持ってきた(teleport)場合は同じ message.id が両方にあるので、先に見たほうで数える
+  function* each(source = 'all') {
     scan();
+    const seen = new Set();
+    if (source !== 'cloud') {
+      // セッション本体のファイルから作業フォルダを決める(サブエージェントの分も同じフォルダに数える)
+      const cwdOf = new Map();
+      for (const r of readers.values()) if (r.reader.cwd && !cwdOf.has(r.session)) cwdOf.set(r.session, r.reader.cwd);
+      for (const { reader, session, project } of readers.values()) {
+        for (const [id, m] of reader.messages) {
+          if (seen.has(id) || !m.t) continue;
+          seen.add(id);
+          yield { id, session, cwd: cwdOf.get(session) || project, cloud: false, m };
+        }
+      }
+    }
+    if (source !== 'local') {
+      for (const x of extra()) {
+        if (seen.has(x.id) || !x.m.t) continue;
+        seen.add(x.id);
+        yield { ...x, cloud: true };
+      }
+    }
+  }
+
+  // days 日分(今日を含む)を日別・モデル別・プロジェクト別・セッション別にまとめる
+  function report({ days = 30, now = Date.now(), source = 'all' } = {}) {
+    days = Math.min(Math.max(Math.floor(Number(days)) || 30, 1), 365);
+    if (!['all', 'local', 'cloud'].includes(source)) source = 'all';
     const end = new Date(now);
     const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - days + 1).getTime();
     const today = dayKey(now);
@@ -213,49 +250,40 @@ function createUsageScanner({ dir = projectsDir() } = {}) {
     const daily = new Map();
     for (let i = 0; i < days; i++) {
       const k = dayKey(new Date(end.getFullYear(), end.getMonth(), end.getDate() - days + 1 + i));
-      daily.set(k, { day: k, cost: 0, tokens: 0, families: {} });
+      daily.set(k, { day: k, cost: 0, tokens: 0, cloud: 0, families: {} });
     }
     const models = new Map();
     const projects = new Map();
     const sessions = new Map();
-    const sum = { today: 0, week: 0, month: 0, range: 0, tokens: 0, unpriced: 0 };
-    const seen = new Set();
+    const sum = { today: 0, week: 0, month: 0, range: 0, tokens: 0, unpriced: 0, cloud: 0, cloudToday: 0 };
 
-    // セッション本体のファイルから作業フォルダを決める(サブエージェントの分も同じフォルダに数える)
-    const cwdOf = new Map();
-    for (const r of readers.values()) if (r.reader.cwd && !cwdOf.has(r.session)) cwdOf.set(r.session, r.reader.cwd);
-
-    for (const { reader, session, project } of readers.values()) {
-      for (const [id, m] of reader.messages) {
-        if (seen.has(id) || !m.t) continue;
-        seen.add(id);
-        const c = costOf(m.model, m) ?? 0;
-        if (m.t >= monthStart) sum.month += c;
-        if (m.t >= weekStart) sum.week += c;
-        if (m.t < start) continue;
-        const tok = m.input + m.output + m.cacheWrite + m.cacheRead;
-        const k = dayKey(m.t);
-        if (k === today) sum.today += c;
-        sum.range += c; sum.tokens += tok;
-        if (costOf(m.model, m) === null) sum.unpriced += 1;
-        const d = daily.get(k);
-        if (d) { d.cost += c; d.tokens += tok; const f = familyOf(m.model); d.families[f] = (d.families[f] || 0) + c; }
-        const mk = m.model || 'unknown';
-        const mo = models.get(mk) || { model: mk, family: familyOf(mk), cost: 0, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, calls: 0 };
-        mo.cost += c; mo.input += m.input; mo.output += m.output; mo.cacheWrite += m.cacheWrite; mo.cacheRead += m.cacheRead; mo.calls += 1;
-        models.set(mk, mo);
-        const cwd = cwdOf.get(session) || project;
-        const pr = projects.get(cwd) || { cwd, cost: 0, tokens: 0, sessions: new Set() };
-        pr.cost += c; pr.tokens += tok; pr.sessions.add(session);
-        projects.set(cwd, pr);
-        const se = sessions.get(session) || { id: session, cwd, cost: 0, tokens: 0, first: m.t, last: m.t };
-        se.cost += c; se.tokens += tok; se.first = Math.min(se.first, m.t); se.last = Math.max(se.last, m.t);
-        sessions.set(session, se);
-      }
+    for (const { session, cwd, cloud, m } of each(source)) {
+      const c = costFor(m) ?? 0;
+      if (m.t >= monthStart) sum.month += c;
+      if (m.t >= weekStart) sum.week += c;
+      if (m.t < start) continue;
+      const tok = m.input + m.output + m.cacheWrite + m.cacheRead;
+      const k = dayKey(m.t);
+      if (k === today) { sum.today += c; if (cloud) sum.cloudToday += c; }
+      sum.range += c; sum.tokens += tok;
+      if (cloud) sum.cloud += c;
+      if (costFor(m) === null) sum.unpriced += 1;
+      const d = daily.get(k);
+      if (d) { d.cost += c; d.tokens += tok; if (cloud) d.cloud += c; const f = familyOf(m.model); d.families[f] = (d.families[f] || 0) + c; }
+      const mk = m.model || 'unknown';
+      const mo = models.get(mk) || { model: mk, family: familyOf(mk), cost: 0, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, calls: 0 };
+      mo.cost += c; mo.input += m.input; mo.output += m.output; mo.cacheWrite += m.cacheWrite; mo.cacheRead += m.cacheRead; mo.calls += 1;
+      models.set(mk, mo);
+      const pr = projects.get(cwd) || { cwd, cloud, cost: 0, tokens: 0, sessions: new Set() };
+      pr.cost += c; pr.tokens += tok; pr.sessions.add(session);
+      projects.set(cwd, pr);
+      const se = sessions.get(session) || { id: session, cwd, cloud, cost: 0, tokens: 0, first: m.t, last: m.t };
+      se.cost += c; se.tokens += tok; se.first = Math.min(se.first, m.t); se.last = Math.max(se.last, m.t);
+      sessions.set(session, se);
     }
     const byCost = (a, b) => b.cost - a.cost;
     return {
-      days, today, dir, files: readers.size,
+      days, today, dir, source, files: readers.size,
       totals: sum,
       daily: [...daily.values()],
       models: [...models.values()].sort(byCost),
@@ -264,7 +292,26 @@ function createUsageScanner({ dir = projectsDir() } = {}) {
     };
   }
 
-  return { scan, report };
+  // from〜to のコストを bucketMs ごとに区切って数える(プランの制限の期間と重ねて見るため)
+  function between({ from, to = Date.now(), bucketMs = 60 * 60 * 1000, source = 'all' }) {
+    const n = Math.max(1, Math.min(2000, Math.ceil((to - from) / bucketMs)));
+    const buckets = Array.from({ length: n }, (_, i) => ({ t: from + i * bucketMs, cost: 0, tokens: 0, cloud: 0 }));
+    let cost = 0;
+    let tokens = 0;
+    let cloudCost = 0;
+    for (const { cloud, m } of each(source)) {
+      if (m.t < from || m.t >= to) continue;
+      const c = costFor(m) ?? 0;
+      const tok = m.input + m.output + m.cacheWrite + m.cacheRead;
+      cost += c; tokens += tok;
+      if (cloud) cloudCost += c;
+      const b = buckets[Math.floor((m.t - from) / bucketMs)];
+      if (b) { b.cost += c; b.tokens += tok; if (cloud) b.cloud += c; }
+    }
+    return { from, to, bucketMs, cost, tokens, cloud: cloudCost, buckets };
+  }
+
+  return { scan, report, between };
 }
 
-module.exports = { UsageTracker, createUsageScanner, familyOf, loadPricing, priceFor, costOf, emptyTotals, PRICING_FILE };
+module.exports = { cache1h, costFor, UsageTracker, createUsageScanner, familyOf, loadPricing, priceFor, costOf, emptyTotals, PRICING_FILE };

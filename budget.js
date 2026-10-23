@@ -2,6 +2,7 @@
 // 予算: その日に使った額(概算)を数え、上限を超えたらジョブの起動を止める。保存先: ~/.claude-galaxy/spend.json
 //   - ジョブ: 終わったときの total_cost_usd を足す
 //   - 対話セッション: 使用量の集計が増えた分を足す(トランスクリプトから数えた概算)
+//   - クラウドセッション: getCloud(day) が返すその日の額(設定 budgetIncludeCloud がオフなら数えない)
 //   日付はローカル時刻で区切る。90 日分だけ残す
 
 const fs = require('fs');
@@ -12,7 +13,7 @@ const FILE = path.join(DATA_DIR, 'spend.json');
 const pad = (n) => String(n).padStart(2, '0');
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 
-function createBudget({ getSettings, onChange }) {
+function createBudget({ getSettings, onChange, getCloud = () => 0 }) {
   let days = {};
   try { days = JSON.parse(fs.readFileSync(FILE, 'utf8')).days || {}; } catch (_) { days = {}; }
   let timer = null;
@@ -44,20 +45,24 @@ function createBudget({ getSettings, onChange }) {
   function status() {
     const s = getSettings();
     const rec = days[today()] || { jobs: 0, sessions: 0 };
-    const spent = (rec.jobs || 0) + (rec.sessions || 0);
+    const withCloud = s.budgetIncludeCloud !== false;
+    const cloudOf = (day) => (withCloud ? Number(getCloud(day)) || 0 : 0);
+    const cloud = cloudOf(today());
+    const spent = (rec.jobs || 0) + (rec.sessions || 0) + cloud;
     const limit = Number(s.budgetDailyUsd) || 0;
     return {
       day: today(),
       spent,
       jobs: rec.jobs || 0,
       sessions: rec.sessions || 0,
+      cloud,
       limit,
       ratio: limit ? spent / limit : 0,
       over: !!limit && spent >= limit,
       warn: !!limit && spent >= limit * 0.8,
       jobDefaultUsd: Number(s.budgetJobUsd) || 0,
       sessionWarnUsd: Number(s.budgetSessionWarnUsd) || 0,
-      history: Object.entries(days).sort().slice(-14).map(([day, r]) => ({ day, spent: (r.jobs || 0) + (r.sessions || 0) })),
+      history: Object.entries(days).sort().slice(-14).map(([day, r]) => ({ day, spent: (r.jobs || 0) + (r.sessions || 0) + cloudOf(day) })),
     };
   }
 

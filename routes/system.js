@@ -3,7 +3,7 @@
 
 module.exports = function routes(ctx) {
   const {
-    app, wrap, sessions, jobs, bus, store, budget, usageScan, diagnose, search, waitDiagHook, tokenFor, runClaude, assertCommandExists, audit,
+    app, wrap, sessions, jobs, bus, store, budget, plan, cloud, usageScan, diagnose, search, waitDiagHook, tokenFor, runClaude, assertCommandExists, audit,
     HOOK_JS, MCP_JS, TMP_DIR, PORT, SHELL, JOB_COMMAND,
   } = ctx;
 
@@ -52,5 +52,28 @@ module.exports = function routes(ctx) {
 
   app.get('/api/budget', wrap(() => budget.status()));
   // Claude Code 全体の使用量(~/.claude/projects のトランスクリプトから数えた概算)
-  app.get('/api/usage', wrap((req) => usageScan.report({ days: req.query.days })));
+  // source=all|local|cloud。クラウドの分は 10 分ごとに読んでいるものを使う(refresh=1 なら読み直す)
+  app.get('/api/usage', async (req, res) => {
+    try {
+      if (req.query.refresh === '1') await cloud.refresh();
+      res.json({ ...usageScan.report({ days: req.query.days, source: String(req.query.source || 'all') }), cloud: cloud.status() });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+  // クラウドセッションの一覧(状態・リポジトリ・Claude Code が数えた累計額)
+  app.get('/api/cloud-sessions', wrap(() => ({ ...cloud.status(), sessions: cloud.sessions() })));
+  // プランの実際の利用率と、各制限の期間に使った API 換算コスト(1 時間ごと)
+  app.get('/api/plan', async (req, res) => {
+    try {
+      const st = req.query.refresh === '1' || !plan.status().fetchedAt ? await plan.refresh() : plan.status();
+      const now = Date.now();
+      const windows = {};
+      for (const l of st.limits) {
+        if (!l.startsAt || windows[l.group]) continue;
+        windows[l.group] = usageScan.between({ from: l.startsAt, to: Math.min(now, l.resetsAt), bucketMs: l.group === 'session' ? 15 * 60 * 1000 : 60 * 60 * 1000 });
+      }
+      const d = new Date(now);
+      const month = usageScan.between({ from: new Date(d.getFullYear(), d.getMonth(), 1).getTime(), to: now, bucketMs: 24 * 60 * 60 * 1000 });
+      res.json({ ...st, windows, month: { cost: month.cost, tokens: month.tokens } });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
 };

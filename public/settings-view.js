@@ -35,6 +35,12 @@
     set('#st-daily', st.budgetDailyUsd || 0);
     set('#st-job', st.budgetJobUsd || 0);
     set('#st-sess', st.budgetSessionWarnUsd || 0);
+    set('#st-pl-sess', st.planLimitSessionPct || 0);
+    set('#st-pl-week', st.planLimitWeeklyPct || 0);
+    set('#st-pl-price', st.planMonthlyUsd || 0);
+    set('#st-pl-margin', st.planPaceMargin || 10);
+    chk('#st-pl-pace', st.planPaceGuard);
+    chk('#st-cloud', st.budgetIncludeCloud !== false);
     chk('#st-notify', st.notifyDesktop !== false);
     chk('#st-inbox', st.permissionInbox);
     set('#st-max', String(st.maxConcurrentJobs || 2));
@@ -57,7 +63,7 @@
   function renderBudget(b) {
     S.budget = b;
     if (!b) return;
-    $('#st-spent').textContent = `今日 ${fmtUsd(b.spent)}${b.limit ? ` / 上限 ${fmtUsd(b.limit)}` : ''}(ジョブ ${fmtUsd(b.jobs)}・セッション ${fmtUsd(b.sessions)})`;
+    $('#st-spent').textContent = `今日 ${fmtUsd(b.spent)}${b.limit ? ` / 上限 ${fmtUsd(b.limit)}` : ''}(ジョブ ${fmtUsd(b.jobs)}・セッション ${fmtUsd(b.sessions)}${b.cloud ? `・クラウド ${fmtUsd(b.cloud)}` : ''})`;
     $('#st-spent').className = b.over ? 'over' : b.warn ? 'warn' : '';
     const max = Math.max(b.limit || 0, ...b.history.map((h) => h.spent), 0.01);
     $('#st-bars').innerHTML = b.history.length ? b.history.map((h) => {
@@ -72,9 +78,15 @@
     num('#st-daily', 'budgetDailyUsd');
     num('#st-job', 'budgetJobUsd');
     num('#st-sess', 'budgetSessionWarnUsd');
+    num('#st-pl-sess', 'planLimitSessionPct');
+    num('#st-pl-week', 'planLimitWeeklyPct');
+    num('#st-pl-price', 'planMonthlyUsd');
+    num('#st-pl-margin', 'planPaceMargin');
     const bool = (id, key) => $(id).addEventListener('change', (e) => put({ [key]: e.target.checked }));
     bool('#st-notify', 'notifyDesktop');
     bool('#st-inbox', 'permissionInbox');
+    bool('#st-pl-pace', 'planPaceGuard');
+    bool('#st-cloud', 'budgetIncludeCloud');
     bool('#st-bus', 'busEnabled');
     bool('#st-audit', 'auditEnabled');
     $('#st-max').addEventListener('change', (e) => put({ maxConcurrentJobs: Number(e.target.value) }));
@@ -186,12 +198,20 @@
       });
       try { fill(await api('GET', '/api/settings')); } catch (_) { /* ignore */ }
       try { renderBudget(await api('GET', '/api/budget')); } catch (_) { /* ignore */ }
+      api('GET', '/api/plan').then((p) => window.SettingsView.onPlan(p), () => { /* ignore */ });
       let guided = false;
       try { guided = localStorage.getItem('guided') === '1'; } catch (_) { guided = true; }
       if (!guided) openGuide();
     },
     onSettings: fill,
     onBudget: renderBudget,
+    // プランの利用率(使用量タブと同じもの)を見出しに出す
+    onPlan(p) {
+      const el = $('#st-plan');
+      if (!el || !p) return;
+      el.textContent = p.ok ? `${p.plan ? `${p.plan.name} · ` : ''}${p.limits.map((l) => `${l.label} ${Math.round(l.percent)}%`).join(' · ')}` : p.error || '';
+      el.className = p.limits.some((l) => l.reason) ? 'over' : p.limits.some((l) => l.percent >= l.threshold - 10) ? 'warn' : '';
+    },
     budget: () => S.budget,
     runDoctor,
     search: runSearch,

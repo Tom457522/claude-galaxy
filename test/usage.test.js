@@ -68,6 +68,12 @@ test('Claude Code 全体: 日別・プロジェクト別にまとめ、期間外
   assert.ok(Math.abs(r.daily[6].families.haiku - 0.1) < 1e-9);
   assert.deepStrictEqual(r.projects.map((p) => [p.cwd, p.sessions]), [['/w/app', 1], ['/w/other', 1]]);
   assert.strictEqual(r.sessions[0].id, 's1');
+  // プランの制限の期間: 今日の 0 時から 1 時間ごと(重複は 1 回だけ)
+  const from = new Date(2026, 9, 23).getTime();
+  const w = createUsageScanner({ dir }).between({ from, to: now });
+  assert.strictEqual(w.buckets.length, 12);
+  assert.ok(Math.abs(w.cost - 4.1) < 1e-9);
+  assert.ok(Math.abs(w.buckets[10].cost - 4.1) < 1e-9); // 10 時台
 });
 
 test('単価がわからないモデルは数えない', () => {
@@ -81,4 +87,11 @@ test('pricing.json で単価を上書きできる', () => {
   delete require.cache[require.resolve('../usage')];
   const u = require('../usage');
   assert.strictEqual(u.costOf('my-model-v1', { input: 1e6, output: 1e6, cacheWrite: 0, cacheRead: 0 }), 3);
+});
+
+test('1 時間キャッシュの書き込みは input の 2 倍で数える', () => {
+  // Claude Code のクラウドセッションが出した額($0.2959)と同じになる
+  const u = { input: 6, output: 1282, cacheWrite: 29189, cacheWrite1h: 29189, cacheRead: 183521 };
+  assert.ok(Math.abs(costOf('claude-opus-5-5', u) - 0.2958802) < 1e-4);
+  assert.ok(costOf('claude-opus-5-5', { ...u, cacheWrite1h: 0 }) < 0.21); // 5 分キャッシュなら 1.25 倍
 });
