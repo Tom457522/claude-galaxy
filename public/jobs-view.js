@@ -76,9 +76,11 @@
       j.status === 'queued' || live ? '<button class="btn" data-jact="cancel">中止</button>' : '',
       !live && j.status !== 'queued' ? '<button class="btn" data-jact="retry" title="同じ内容でもう一度">再実行</button>' : '',
       j.claudeSessionId && !live ? '<button class="btn" data-jact="open" title="この会話をターミナルで開いて続ける(claude --resume)">ターミナルで</button>' : '',
+      j.startedAt ? '<button class="icon-btn" data-jact="diff" title="作業場所の差分(git diff)">±</button>' : '',
       !live && j.status !== 'queued' ? '<button class="icon-btn" data-jact="remove" title="一覧から削除">✕</button>' : '',
     ].join('');
-    const meta = [baseName(j.cwd), j.model, PRIORITY[j.priority] && `優先度 ${PRIORITY[j.priority]}`, j.permissionMode, origin(j)]
+    const wt = j.worktreeInfo ? `⑂ ${j.worktreeInfo.branch}${j.worktreeInfo.removed ? '(削除済み)' : ''}` : (j.worktree && j.status === 'queued' ? '⑂ worktree' : '');
+    const meta = [baseName(j.worktreeInfo ? j.worktreeInfo.origCwd : j.cwd), wt, j.model, PRIORITY[j.priority] && `優先度 ${PRIORITY[j.priority]}`, j.permissionMode, origin(j)]
       .filter(Boolean).map((x) => `<span>${esc(x)}</span>`).join('');
     return `<div class="job-row js-${j.status}" data-job="${esc(j.id)}">` +
       `<span class="job-st" title="${st.label}">${st.icon}</span>` +
@@ -153,6 +155,7 @@
       u && `<span>トークン 入力 ${u.input} / 出力 ${u.output} / キャッシュ ${u.cacheRead + u.cacheWrite}</span>`,
       j.numTurns && `<span>${j.numTurns} ターン</span>`,
       j.claudeSessionId && `<span title="claude --resume で開けます">セッション ${esc(j.claudeSessionId)}</span>`,
+      j.worktreeInfo && `<span title="${esc(j.worktreeInfo.path)}">⑂ worktree ${esc(j.worktreeInfo.branch)}${j.worktreeInfo.removed ? '(削除済み)' : ''}</span>`,
     ].filter(Boolean).join('');
     $('#jd-prompt').textContent = j.prompt;
     $('#jd-error').textContent = j.error || '';
@@ -214,6 +217,8 @@
     $('#jf-tools').value = (t.allowedTools || []).join('\n');
     $('#jf-budget').value = t.maxBudgetUsd || '';
     $('#jf-priority').value = t.priority || 'normal';
+    $('#jf-worktree').checked = !!t.worktree;
+    $('#jf-mcp').innerHTML = window.ToolsView.pickerHtml(Array.isArray(t.mcpServers) ? t.mcpServers : null);
     $('#af-cron').value = data.cron || '0 9 * * 1-5';
     $('#af-path').value = data.watchPath || '';
     $('#af-debounce').value = data.debounceSec || 10;
@@ -233,6 +238,8 @@
       allowedTools: $('#jf-tools').value.split(/[\n,]/).map((x) => x.trim()).filter(Boolean),
       maxBudgetUsd: $('#jf-budget').value.trim(),
       priority: $('#jf-priority').value,
+      worktree: $('#jf-worktree').checked,
+      mcpServers: window.ToolsView.pickerValue($('#jf-mcp')),
     };
   }
 
@@ -274,6 +281,7 @@
       else if (act === 'retry') { const n = await api('POST', `/api/jobs/${id}/retry`); S.jobs.set(n.id, n); renderJobs(); }
       else if (act === 'remove') { await api('DELETE', `/api/jobs/${id}`); S.jobs.delete(id); renderJobs(); }
       else if (act === 'open') { const s = await api('POST', `/api/jobs/${id}/open`); if (S.opts.onOpenSession) S.opts.onOpenSession(s); }
+      else if (act === 'diff') window.DiffView.open(id);
       else if (act === 'edit-copy' && j) openForm('job', { ...j, name: `${j.name} のコピー` });
     } catch (e) { alert(e.message); }
   }
@@ -319,6 +327,7 @@
       if (ab) onAutoAction(e.target.closest('[data-auto]').dataset.auto, 'toggle', ab);
     });
     $('#jd-close').addEventListener('click', () => $('#dlg-jobdetail').close());
+    $('#jd-diff').addEventListener('click', () => { if (S.detail) window.DiffView.open(S.detail); });
     $('#dlg-jobdetail').addEventListener('close', () => { S.detail = null; });
     $('#jd-copy').addEventListener('click', () => {
       const j = S.jobs.get(S.detail);

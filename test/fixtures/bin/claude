@@ -1,0 +1,89 @@
+#!/usr/bin/env node
+'use strict';
+// テスト用の偽 claude。本物の代わりに、Claude Galaxy が期待する入出力だけを再現する
+//   claude -p --output-format stream-json ... : 標準入力のプロンプトを読み、stream-json を出す
+//     プロンプト中の「CALL <tool> <json>」行は、--mcp-config の galaxy MCP サーバーを実際に呼ぶ
+//     「PERM」を含むと PermissionRequest hook を呼び、「SLEEP」を含むと 30 秒待つ
+//   claude -p --output-format json ... : ディスパッチャー用。候補フォルダの先頭を選んだ案を返す
+//   claude mcp list : 固定の一覧を出す
+//   それ以外(対話起動): 引数を表示して入力を待つ
+const { spawn, spawnSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+const args = process.argv.slice(2);
+const out = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
+
+if (args[0] === 'mcp' && args[1] === 'list') {
+  console.log('fake-server: npx fake-mcp - ✓ Connected');
+  process.exit(0);
+}
+
+if (!args.includes('-p')) {
+  console.log(`INTERACTIVE ARGS: ${args.join(' ')}`);
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (d) => process.stdout.write(`GOT: ${JSON.stringify(d)}\n`));
+  setInterval(() => {}, 1 << 30);
+  return;
+}
+
+let prompt = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (c) => { prompt += c; });
+process.stdin.on('end', async () => {
+  const sid = `aaaaaaaa-bbbb-cccc-dddd-${String(Date.now()).slice(-12)}`;
+  const fmt = args[args.indexOf('--output-format') + 1];
+  if (fmt === 'json') {
+    // ディスパッチャー: 「- name: path」の最初の候補を選ぶ
+    const m = /^- [^:]+: (.+?)(?: \[git\])? \(/m.exec(prompt);
+    const plan = { mode: /調べ/.test(prompt) ? 'job' : 'session', cwd: m ? m[1] : '', worktree: false, permissionMode: 'plan', model: '', name: 'routed', prompt: 'do it', reason: 'fake router' };
+    out({ type: 'result', subtype: 'success', is_error: false, result: `案です:\n${JSON.stringify(plan)}` });
+    return;
+  }
+  out({ type: 'system', subtype: 'init', session_id: sid, cwd: process.cwd() });
+  const calls = [];
+  for (const line of prompt.split('\n')) {
+    const mm = /^CALL (\w+) (.*)$/.exec(line);
+    if (mm) calls.push([mm[1], JSON.parse(mm[2])]);
+  }
+  const results = [];
+  const i = args.indexOf('--mcp-config');
+  if (i >= 0 && calls.length) {
+    const conf = JSON.parse(fs.readFileSync(args[i + 1], 'utf8')).mcpServers.galaxy;
+    const srv = spawn(conf.command, conf.args, { env: { ...process.env, ...conf.env } });
+    let buf = '';
+    const pend = new Map();
+    let n = 0;
+    srv.stdout.on('data', (c) => {
+      buf += c;
+      let k;
+      while ((k = buf.indexOf('\n')) >= 0) {
+        const l = buf.slice(0, k);
+        buf = buf.slice(k + 1);
+        const r = JSON.parse(l);
+        if (pend.has(r.id)) pend.get(r.id)(r);
+      }
+    });
+    const rpc = (method, params) => new Promise((res) => { const id = ++n; pend.set(id, res); srv.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`); });
+    await rpc('initialize', { protocolVersion: '2025-06-18' });
+    for (const [name, a] of calls) {
+      out({ type: 'assistant', message: { content: [{ type: 'tool_use', name: `mcp__galaxy__${name}`, input: a }] } });
+      const r = await rpc('tools/call', { name, arguments: a });
+      results.push({ name, isError: r.result.isError, text: r.result.content[0].text });
+    }
+    srv.stdin.end();
+  }
+  if (prompt.includes('EDIT')) {
+    fs.writeFileSync(path.join(process.cwd(), 'edited-by-job.txt'), 'hello\n');
+    out({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Write', input: { file_path: path.join(process.cwd(), 'edited-by-job.txt') } }] } });
+  }
+  if (prompt.includes('PERM')) {
+    const r = spawnSync('node', [path.join(__dirname, '..', '..', '..', 'hook.js'), 'PermissionRequest'], {
+      input: JSON.stringify({ hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'rm -rf build' } }), encoding: 'utf8',
+    });
+    results.push({ perm: r.stdout });
+  }
+  if (prompt.includes('SLEEP')) await new Promise((r) => setTimeout(r, 30000));
+  out({ type: 'assistant', message: { content: [{ type: 'text', text: `working on: ${prompt.slice(0, 50)}` }] } });
+  out({ type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(results), session_id: sid, total_cost_usd: 0.0123, num_turns: 2, duration_ms: 50, usage: { input_tokens: 10, output_tokens: 20 } });
+});

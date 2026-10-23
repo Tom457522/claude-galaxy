@@ -16,8 +16,14 @@
       <button class="tab" data-tab="term">ターミナル <span id="tab-badge" class="tab-badge"></span></button>
       <button class="tab" data-tab="jobs">ジョブ <span id="tab-jobs-badge" class="tab-badge tab-badge-run"></span></button>
       <button class="tab" data-tab="board">ボード <span id="tab-board-badge" class="tab-badge"></span></button>
+      <button class="tab" data-tab="audit">記録</button>
+      <button class="tab" data-tab="tools">ツール</button>
     </nav>
     <button id="btn-new" class="btn primary">＋ 新規セッション</button>
+    <form id="cmd-form" class="cmd-form" title="やりたいことを書くと、どのフォルダで・どの方法で動かすかの案を作ります(Ctrl+K)">
+      <input id="cmd-input" type="text" placeholder="やりたいことを書く…(Ctrl+K)" autocomplete="off">
+      <button id="cmd-go" class="btn" type="submit">➤</button>
+    </form>
     <div class="spacer"></div>
     <label id="layout-wrap" class="layout-label hidden">レイアウト
       <select id="layout">
@@ -227,6 +233,76 @@
         </div>
       </section>
 
+      <!-- 記録: 監査ログ -->
+      <section id="audit" class="jobs hidden">
+        <div class="jobs-wrap">
+          <div class="apps-head">
+            <div>
+              <h2><span>☰</span> AUDIT LOG</h2>
+              <p>エージェントが実行したツール・権限の判断・起動と終了の記録です(ファイルの中身は残しません)。保存先 <code>~/.claude-galaxy/audit/</code></p>
+            </div>
+            <div class="jobs-tools">
+              <label class="inbox-toggle"><input type="checkbox" id="au-on"> 記録する</label>
+              <label class="layout-label">保存
+                <select id="au-keep"><option value="7">7 日</option><option value="30">30 日</option><option value="90">90 日</option><option value="365">365 日</option></select>
+              </label>
+            </div>
+          </div>
+          <div class="au-filters">
+            <select id="au-days"><option value="1">今日</option><option value="2" selected>2 日</option><option value="7">7 日</option><option value="30">30 日</option></select>
+            <select id="au-kind">
+              <option value="">すべて</option><option value="tool">ツール</option><option value="permission">権限</option>
+              <option value="session-start">起動</option><option value="session-exit">終了</option>
+              <option value="job-start">ジョブ開始</option><option value="job-end">ジョブ終了</option><option value="dispatch">窓口</option>
+            </select>
+            <input id="au-agent" type="text" placeholder="エージェント ID(s1 / j3)" autocomplete="off">
+            <input id="au-q" type="text" placeholder="検索(ツール・ファイル・コマンド)" autocomplete="off">
+            <button id="au-reload" class="btn">⟳</button>
+            <span id="au-count" class="g-note"></span>
+          </div>
+          <div id="au-list" class="au-list"></div>
+        </div>
+      </section>
+
+      <!-- ツール: MCP サーバー・skills -->
+      <section id="tools" class="jobs hidden">
+        <div class="jobs-wrap">
+          <div class="apps-head">
+            <div>
+              <h2><span>⚙</span> TOOLS</h2>
+              <p>Claude に渡す MCP サーバーの管理と、Claude Code の設定の一覧です。</p>
+            </div>
+          </div>
+          <div class="apps-sec">
+            <div class="apps-lbl auto-lbl">GALAXY MCP SERVERS <small>セッション・ジョブごとに選んで渡す(--mcp-config)</small>
+              <button id="tl-add" class="btn">＋ MCP サーバー</button></div>
+            <div id="tl-servers" class="autos-grid"></div>
+          </div>
+          <div class="apps-sec">
+            <div class="apps-lbl">CLAUDE CODE <small>設定ファイルの MCP サーバーと、skills / agents / commands(読むだけ)</small></div>
+            <div class="au-filters">
+              <input id="tl-cwd" type="text" placeholder="プロジェクトのフォルダ(空ならユーザー設定だけ)" autocomplete="off" spellcheck="false">
+              <button id="tl-cwd-go" class="btn">表示</button>
+              <button id="tl-mcplist" class="btn" title="このフォルダで claude mcp list を実行して、接続できるか確かめます">claude mcp list で確認</button>
+            </div>
+            <pre id="tl-mcplist-out" class="perm-body hidden"></pre>
+            <div id="tl-claude" class="tl-list"></div>
+            <div id="tl-ext" class="tl-ext"></div>
+          </div>
+          <div class="apps-sec">
+            <div class="apps-lbl">SETTINGS</div>
+            <div class="tl-settings">
+              <label>worktree の置き場所(空なら ~/.claude-galaxy/worktrees)
+                <input id="tl-wtdir" type="text" autocomplete="off" spellcheck="false">
+              </label>
+              <label>窓口の振り分けに使うモデル
+                <input id="tl-dmodel" type="text" placeholder="haiku" autocomplete="off">
+              </label>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <main id="grid" class="grid hidden" data-cols="auto"></main>
       <div id="empty" class="empty hidden">
         <p>セッションがありません</p>
@@ -250,6 +326,8 @@
       <label>起動コマンド
         <input id="f-cmd" type="text" placeholder="claude" autocomplete="off">
       </label>
+      <label class="g-chk" title="git リポジトリなら、別ブランチ(galaxy/<ID>)の作業コピーを作ってそこで起動します。ほかのセッションと同じファイルを触っても衝突しません"><input type="checkbox" id="f-worktree"> 別の worktree(ブランチ)で起動する</label>
+      <div class="f-mcp-wrap"><span class="g-lbl">追加の MCP サーバー</span><div id="f-mcp" class="g-cats"></div></div>
       <p id="dlg-error" class="error hidden"></p>
       <div class="dlg-actions">
         <button type="button" id="dlg-cancel" class="btn">キャンセル</button>
@@ -365,6 +443,8 @@
       <label>確認なしで許可するツール(任意・1 行に 1 つ)
         <textarea id="jf-tools" rows="2" spellcheck="false" placeholder="Bash(npm test:*)&#10;Edit"></textarea>
       </label>
+      <label class="g-chk" title="git リポジトリなら、別ブランチ(galaxy/<ID>)の作業コピーで実行します。並行して動くほかの作業と衝突しません"><input type="checkbox" id="jf-worktree"> 別の worktree(ブランチ)で実行する</label>
+      <div class="f-mcp-wrap"><span class="g-lbl">追加の MCP サーバー</span><div id="jf-mcp" class="g-cats"></div></div>
       <p id="jf-error" class="error hidden"></p>
       <div class="dlg-actions">
         <button type="button" id="jf-cancel" class="btn">キャンセル</button>
@@ -380,8 +460,89 @@
       <details class="jd-prompt-wrap"><summary>プロンプト</summary><pre id="jd-prompt" class="perm-body"></pre></details>
       <p id="jd-error" class="error hidden"></p>
       <div id="jd-log" class="jd-log"></div>
-      <div class="dlg-actions"><button id="jd-copy" class="btn">内容をコピーして新しいジョブ</button></div>
+      <div class="dlg-actions"><button id="jd-diff" class="btn">± 差分</button><button id="jd-copy" class="btn">内容をコピーして新しいジョブ</button></div>
     </div>
+  </dialog>
+
+  <dialog id="dlg-diff" class="dlg-xwide">
+    <div class="jd">
+      <div class="jd-head"><h2 id="df-title">差分</h2><button id="df-reload" class="icon-btn" title="読み直す">⟳</button><button id="df-close" class="icon-btn" title="閉じる">✕</button></div>
+      <div id="df-meta" class="job-meta jd-meta"></div>
+      <div id="df-body" class="df-body"></div>
+      <div id="df-wt" class="dlg-actions hidden">
+        <span class="g-note">worktree を片付けても、ブランチとコミット済みの変更は残ります。</span>
+        <button id="df-rm" class="btn">worktree を削除</button>
+        <button id="df-rm-force" class="btn danger">変更ごと削除</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="dlg-mcp" class="dlg-wide">
+    <form method="dialog" id="ms-form">
+      <h2 id="ms-title">MCP サーバーを追加</h2>
+      <div class="app-types">
+        <label class="app-type"><input type="radio" name="ms-type" value="stdio" checked><b>stdio</b><small>コマンドを起動する</small></label>
+        <label class="app-type"><input type="radio" name="ms-type" value="http"><b>HTTP</b><small>URL に接続する</small></label>
+        <label class="app-type"><input type="radio" name="ms-type" value="sse"><b>SSE</b><small>URL に接続する(古い方式)</small></label>
+      </div>
+      <div class="app-row">
+        <label>名前(英数字・- ・_)<input id="ms-name" type="text" maxlength="40" autocomplete="off" placeholder="例: github"></label>
+        <label>説明(任意)<input id="ms-desc" type="text" maxlength="200" autocomplete="off"></label>
+      </div>
+      <div id="ms-stdio">
+        <label>起動コマンド <input id="ms-command" type="text" autocomplete="off" spellcheck="false" placeholder="npx"></label>
+        <label>引数(1 行に 1 つ)<textarea id="ms-args" rows="3" spellcheck="false" placeholder="-y&#10;@modelcontextprotocol/server-filesystem&#10;C:\Users\you\docs"></textarea></label>
+        <label>環境変数(KEY=VALUE を 1 行に 1 つ。保存後は伏せ字で表示)<textarea id="ms-env" rows="2" spellcheck="false" placeholder="API_KEY=..."></textarea></label>
+      </div>
+      <div id="ms-http" class="hidden">
+        <label>URL <input id="ms-url" type="text" autocomplete="off" spellcheck="false" placeholder="https://example.com/mcp"></label>
+        <label>ヘッダー(Name: value を 1 行に 1 つ。保存後は伏せ字で表示)<textarea id="ms-headers" rows="2" spellcheck="false" placeholder="Authorization: Bearer ..."></textarea></label>
+      </div>
+      <label class="g-chk"><input type="checkbox" id="ms-default"> 既定で使う(新しいセッション・ジョブで最初から選ばれた状態にする)</label>
+      <p class="g-note">保存先は ~/.claude-galaxy/mcp-servers.json(本人だけが読める権限)です。Claude Code の設定ファイルは書き換えません。</p>
+      <p id="ms-error" class="error hidden"></p>
+      <div class="dlg-actions">
+        <button type="button" id="ms-cancel" class="btn">キャンセル</button>
+        <button type="submit" class="btn primary">保存して接続確認</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-dispatch" class="dlg-wide">
+    <form method="dialog" id="dp-form">
+      <h2>実行案</h2>
+      <p id="dp-reason" class="g-note"></p>
+      <div class="app-types">
+        <label class="app-type"><input type="radio" name="dp-mode" value="session" checked><b>対話セッション</b><small>ターミナルでやり取りしながら進める</small></label>
+        <label class="app-type"><input type="radio" name="dp-mode" value="job"><b>ジョブ</b><small>画面なしで実行し、結果を見る</small></label>
+      </div>
+      <label>作業ディレクトリ
+        <input id="dp-cwd" type="text" list="dp-cands" autocomplete="off" spellcheck="false">
+        <datalist id="dp-cands"></datalist>
+      </label>
+      <label>名前 <input id="dp-name" type="text" maxlength="60" autocomplete="off"></label>
+      <label>プロンプト
+        <textarea id="dp-prompt" rows="5" spellcheck="false"></textarea>
+      </label>
+      <div class="app-row">
+        <label>モデル(任意)<input id="dp-model" type="text" placeholder="sonnet / opus / haiku" autocomplete="off"></label>
+        <label id="dp-job-part" class="hidden">権限モード
+          <select id="dp-perm">
+            <option value="">既定(確認は受信箱で)</option><option value="plan">plan(読むだけ)</option>
+            <option value="dontAsk">dontAsk</option><option value="acceptEdits">acceptEdits(ファイル編集は確認なし)</option>
+          </select>
+        </label>
+      </div>
+      <label class="g-chk"><input type="checkbox" id="dp-worktree"> 別の worktree(ブランチ)で動かす</label>
+      <div class="f-mcp-wrap"><span class="g-lbl">追加の MCP サーバー</span><div id="dp-mcp" class="g-cats"></div></div>
+      <p id="dp-error" class="error hidden"></p>
+      <div class="dlg-actions">
+        <button type="button" id="dp-reroute" class="btn" title="Claude にもう一度振り分けさせる">振り分け直す</button>
+        <div class="spacer"></div>
+        <button type="button" id="dp-cancel" class="btn">キャンセル</button>
+        <button type="submit" id="dp-run" class="btn primary">実行</button>
+      </div>
+    </form>
   </dialog>
 
   <script src="/vendor/xterm/lib/xterm.js"></script>
@@ -392,6 +553,9 @@
   <script src="/apps-view.js"></script>
   <script src="/jobs-view.js"></script>
   <script src="/board-view.js"></script>
+  <script src="/audit-view.js"></script>
+  <script src="/tools-view.js"></script>
+  <script src="/dispatch-view.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

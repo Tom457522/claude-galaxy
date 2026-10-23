@@ -56,6 +56,8 @@ function normalize(input, { strict = false } = {}) {
     maxBudgetUsd: budget,
     priority,
     resumeId,
+    worktree: !!input.worktree, // 別の git worktree(ブランチ)で実行する
+    mcpServers: Array.isArray(input.mcpServers) ? input.mcpServers.filter((x) => typeof x === 'string').slice(0, 30) : null,
   };
 }
 
@@ -77,6 +79,9 @@ function createJobManager(deps) {
     maxBudgetUsd: j.maxBudgetUsd,
     priority: j.priority,
     resumeId: j.resumeId,
+    worktree: j.worktree,
+    worktreeInfo: j.worktreeInfo || null,
+    mcpServers: j.mcpServers,
     status: j.status,
     createdAt: j.createdAt,
     startedAt: j.startedAt,
@@ -226,7 +231,10 @@ function createJobManager(deps) {
     if (m.type === 'assistant' && m.message && Array.isArray(m.message.content)) {
       for (const b of m.message.content) {
         if (b.type === 'text' && b.text && b.text.trim()) j.lastText = clip(b.text.trim(), 400);
-        if (b.type === 'tool_use') j.lastTool = clip(b.name, 80);
+        if (b.type === 'tool_use') {
+          j.lastTool = clip(b.name, 80);
+          if (deps.onToolUse) deps.onToolUse(publicJob(j), b.name, b.input);
+        }
       }
       changed(j);
     } else if (m.type === 'result') {
@@ -251,6 +259,7 @@ function createJobManager(deps) {
   function start(j) {
     let cmdline;
     try {
+      if (deps.prepare) deps.prepare(j); // worktree の作成など(cwd が変わることがある)
       deps.checkCommand(deps.jobCommand(), j.cwd);
       cmdline = deps.buildCommand(j);
     } catch (e) {
@@ -319,7 +328,18 @@ function createJobManager(deps) {
   function retry(id) {
     const j = jobs.get(id);
     if (!j) throw new Error('ジョブが見つかりません');
-    return create(j, { source: j.source, parent: j.parent, automationId: j.automationId, depth: j.depth });
+    // worktree で動いたジョブは、元の作業ディレクトリで新しい worktree を作り直す
+    const src = j.worktreeInfo ? { ...j, cwd: j.worktreeInfo.origCwd || j.cwd } : j;
+    return create(src, { source: j.source, parent: j.parent, automationId: j.automationId, depth: j.depth });
+  }
+
+  // 記録の一部を書き換える(worktree を片付けたときなど)
+  function patch(id, fields) {
+    const j = jobs.get(id);
+    if (!j) return null;
+    Object.assign(j, fields);
+    changed(j, { now: true });
+    return publicJob(j);
   }
 
   function remove(id) {
@@ -398,6 +418,7 @@ function createJobManager(deps) {
     get: (id) => (jobs.has(id) ? publicJob(jobs.get(id)) : null),
     isRunning: (id) => jobs.get(id)?.status === 'running',
     create,
+    patch,
     cancel,
     retry,
     remove,
@@ -408,4 +429,4 @@ function createJobManager(deps) {
   };
 }
 
-module.exports = { createJobManager, PERMISSION_MODES };
+module.exports = { createJobManager, normalize, PERMISSION_MODES };
