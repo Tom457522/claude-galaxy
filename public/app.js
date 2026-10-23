@@ -150,13 +150,13 @@ const GROUPS = {
   apps: ['apps'],
   work: ['term', 'jobs'],
   board: ['board'],
-  admin: ['audit', 'search', 'tools', 'settings', 'doctor'],
+  admin: ['usage', 'audit', 'search', 'tools', 'settings', 'doctor'],
 };
 const SUB_LABEL = {
-  term: 'ターミナル', jobs: 'ジョブ', audit: '記録', search: '検索', tools: 'ツール', settings: '設定', doctor: '診断',
+  term: 'ターミナル', jobs: 'ジョブ', usage: '使用量', audit: '記録', search: '検索', tools: 'ツール', settings: '設定', doctor: '診断',
 };
 const TABS = Object.values(GROUPS).flat();
-const SECTIONS = ['home', 'apps', 'jobs', 'board', 'audit', 'search', 'tools', 'settings', 'doctor']; // term はグリッド(relayout が出し分け)
+const SECTIONS = ['home', 'apps', 'jobs', 'board', 'usage', 'audit', 'search', 'tools', 'settings', 'doctor']; // term はグリッド(relayout が出し分け)
 const groupOf = (tab) => Object.keys(GROUPS).find((g) => GROUPS[g].includes(tab)) || 'home';
 const lsGet = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch (_) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (_) { /* ignore */ } };
@@ -184,6 +184,7 @@ function setTab(tab) {
   renderSubnav(group);
   for (const id of SECTIONS) $(`#${id}`).classList.toggle('hidden', tab !== id);
   if (tab === 'audit') window.AuditView.show(); else window.AuditView.hide();
+  if (tab === 'usage') window.UsageView.show(); else window.UsageView.hide();
   if (tab === 'tools') window.ToolsView.show();
   $('#layout-wrap').classList.toggle('hidden', tab !== 'term');
   if (tab === 'home') window.GraphView.show(); else window.GraphView.hide();

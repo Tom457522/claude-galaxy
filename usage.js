@@ -69,7 +69,8 @@ class TranscriptReader {
     this.file = file;
     this.offset = 0;
     this.rest = '';
-    this.messages = new Map(); // message.id -> { model, input, output, cacheWrite, cacheRead }
+    this.messages = new Map(); // message.id -> { model, input, output, cacheWrite, cacheRead, t }
+    this.cwd = ''; // 最後に見た作業フォルダ
   }
 
   // 追記分を読み込む。変化があれば true
@@ -98,7 +99,9 @@ class TranscriptReader {
       if (j.type !== 'assistant' || !u) continue;
       const id = msg.id || j.requestId || j.uuid;
       if (!id) continue;
+      if (typeof j.cwd === 'string' && j.cwd) this.cwd = j.cwd;
       this.messages.set(id, {
+        t: Date.parse(j.timestamp) || 0,
         model: msg.model || '',
         input: u.input_tokens || 0,
         output: u.output_tokens || 0,
@@ -162,4 +165,106 @@ class UsageTracker {
   }
 }
 
-module.exports = { UsageTracker, loadPricing, priceFor, costOf, emptyTotals, PRICING_FILE };
+// ---------- Claude Code 全体の集計(Galaxy の外で使った分も含む)----------
+// ~/.claude/projects/<プロジェクト>/<セッション ID>.jsonl と <セッション ID>/subagents/*.jsonl を読む
+
+const projectsDir = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects');
+const pad = (n) => String(n).padStart(2, '0');
+const dayKey = (t) => { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+// グラフの色分けに使うモデルの系統
+const FAMILIES = ['opus', 'sonnet', 'haiku', 'fable'];
+const familyOf = (model) => FAMILIES.find((f) => String(model || '').toLowerCase().includes(f)) || 'other';
+
+function createUsageScanner({ dir = projectsDir() } = {}) {
+  const readers = new Map(); // file -> { reader, session, project }
+
+  function scan() {
+    let projects = [];
+    try { projects = fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()); } catch (_) { return; }
+    for (const p of projects) {
+      const pdir = path.join(dir, p.name);
+      let names = [];
+      try { names = fs.readdirSync(pdir); } catch (_) { continue; }
+      for (const n of names) {
+        if (n.endsWith('.jsonl')) { add(path.join(pdir, n), n.slice(0, -6), p.name); continue; }
+        const sub = path.join(pdir, n, 'subagents');
+        let subs = [];
+        try { subs = fs.readdirSync(sub); } catch (_) { continue; }
+        for (const s of subs) if (s.endsWith('.jsonl')) add(path.join(sub, s), n, p.name);
+      }
+    }
+    for (const r of readers.values()) r.reader.read();
+  }
+
+  function add(file, session, project) {
+    if (!readers.has(file)) readers.set(file, { reader: new TranscriptReader(file), session, project });
+  }
+
+  // days 日分(今日を含む)を日別・モデル別・プロジェクト別・セッション別にまとめる
+  function report({ days = 30, now = Date.now() } = {}) {
+    days = Math.min(Math.max(Math.floor(Number(days)) || 30, 1), 365);
+    scan();
+    const end = new Date(now);
+    const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - days + 1).getTime();
+    const today = dayKey(now);
+    const weekStart = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 6).getTime();
+    const monthStart = new Date(end.getFullYear(), end.getMonth(), 1).getTime();
+
+    const daily = new Map();
+    for (let i = 0; i < days; i++) {
+      const k = dayKey(new Date(end.getFullYear(), end.getMonth(), end.getDate() - days + 1 + i));
+      daily.set(k, { day: k, cost: 0, tokens: 0, families: {} });
+    }
+    const models = new Map();
+    const projects = new Map();
+    const sessions = new Map();
+    const sum = { today: 0, week: 0, month: 0, range: 0, tokens: 0, unpriced: 0 };
+    const seen = new Set();
+
+    // セッション本体のファイルから作業フォルダを決める(サブエージェントの分も同じフォルダに数える)
+    const cwdOf = new Map();
+    for (const r of readers.values()) if (r.reader.cwd && !cwdOf.has(r.session)) cwdOf.set(r.session, r.reader.cwd);
+
+    for (const { reader, session, project } of readers.values()) {
+      for (const [id, m] of reader.messages) {
+        if (seen.has(id) || !m.t) continue;
+        seen.add(id);
+        const c = costOf(m.model, m) ?? 0;
+        if (m.t >= monthStart) sum.month += c;
+        if (m.t >= weekStart) sum.week += c;
+        if (m.t < start) continue;
+        const tok = m.input + m.output + m.cacheWrite + m.cacheRead;
+        const k = dayKey(m.t);
+        if (k === today) sum.today += c;
+        sum.range += c; sum.tokens += tok;
+        if (costOf(m.model, m) === null) sum.unpriced += 1;
+        const d = daily.get(k);
+        if (d) { d.cost += c; d.tokens += tok; const f = familyOf(m.model); d.families[f] = (d.families[f] || 0) + c; }
+        const mk = m.model || 'unknown';
+        const mo = models.get(mk) || { model: mk, family: familyOf(mk), cost: 0, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, calls: 0 };
+        mo.cost += c; mo.input += m.input; mo.output += m.output; mo.cacheWrite += m.cacheWrite; mo.cacheRead += m.cacheRead; mo.calls += 1;
+        models.set(mk, mo);
+        const cwd = cwdOf.get(session) || project;
+        const pr = projects.get(cwd) || { cwd, cost: 0, tokens: 0, sessions: new Set() };
+        pr.cost += c; pr.tokens += tok; pr.sessions.add(session);
+        projects.set(cwd, pr);
+        const se = sessions.get(session) || { id: session, cwd, cost: 0, tokens: 0, first: m.t, last: m.t };
+        se.cost += c; se.tokens += tok; se.first = Math.min(se.first, m.t); se.last = Math.max(se.last, m.t);
+        sessions.set(session, se);
+      }
+    }
+    const byCost = (a, b) => b.cost - a.cost;
+    return {
+      days, today, dir, files: readers.size,
+      totals: sum,
+      daily: [...daily.values()],
+      models: [...models.values()].sort(byCost),
+      projects: [...projects.values()].map((p) => ({ ...p, sessions: p.sessions.size })).sort(byCost),
+      sessions: [...sessions.values()].sort(byCost).slice(0, 20),
+    };
+  }
+
+  return { scan, report };
+}
+
+module.exports = { UsageTracker, createUsageScanner, familyOf, loadPricing, priceFor, costOf, emptyTotals, PRICING_FILE };

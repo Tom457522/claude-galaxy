@@ -6,7 +6,7 @@ const path = require('path');
 const { tempHome } = require('./helpers');
 
 const home = tempHome();
-const { UsageTracker, costOf } = require('../usage');
+const { UsageTracker, costOf, createUsageScanner } = require('../usage');
 
 const line = (id, model, input, output, cw = 0, cr = 0) => JSON.stringify({
   type: 'assistant', message: { id, model, usage: { input_tokens: input, output_tokens: output, cache_creation_input_tokens: cw, cache_read_input_tokens: cr } },
@@ -36,6 +36,38 @@ test('サブエージェントのトランスクリプトも拾う', () => {
   t.addFile(file);
   t.refresh();
   assert.strictEqual(t.totals.input, 300);
+});
+
+test('Claude Code 全体: 日別・プロジェクト別にまとめ、期間外とサブエージェントの重複を除く', () => {
+  const dir = path.join(home, 'projects');
+  const now = new Date(2026, 9, 23, 12).getTime();
+  const at = (daysAgo) => new Date(2026, 9, 23 - daysAgo, 10).toISOString();
+  const row = (id, model, input, output, daysAgo, cwd) => JSON.stringify({
+    type: 'assistant', timestamp: at(daysAgo), cwd,
+    message: { id, model, usage: { input_tokens: input, output_tokens: output } },
+  });
+  fs.mkdirSync(path.join(dir, 'p1', 's1', 'subagents'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'p2'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'p1', 's1.jsonl'), [
+    row('a', 'claude-opus-5-5', 1e6, 0, 0, '/w/app'), // 今日 $4
+    row('b', 'claude-sonnet-5-5', 1e6, 0, 3, '/w/app'), // 3 日前 $2
+    row('old', 'claude-opus-5-5', 1e6, 0, 40, '/w/app'), // 期間外
+  ].join('\n') + '\n');
+  fs.writeFileSync(path.join(dir, 'p1', 's1', 'subagents', 'agent-1.jsonl'), [
+    row('a', 'claude-opus-5-5', 1e6, 0, 0, '/w/app'), // 本体と重複
+    row('c', 'claude-haiku-5-5', 1e6, 0, 0, '/w/app'), // $0.1
+  ].join('\n') + '\n');
+  fs.writeFileSync(path.join(dir, 'p2', 's2.jsonl'), `${row('d', 'claude-opus-5-5', 0, 1e5, 1, '/w/other')}\n`); // $2
+  const r = createUsageScanner({ dir }).report({ days: 7, now });
+  assert.strictEqual(r.files, 3);
+  assert.strictEqual(r.daily.length, 7);
+  assert.strictEqual(r.daily[6].day, '2026-10-23');
+  assert.ok(Math.abs(r.totals.today - 4.1) < 1e-9);
+  assert.ok(Math.abs(r.totals.range - 8.1) < 1e-9);
+  assert.ok(Math.abs(r.daily[6].families.opus - 4) < 1e-9);
+  assert.ok(Math.abs(r.daily[6].families.haiku - 0.1) < 1e-9);
+  assert.deepStrictEqual(r.projects.map((p) => [p.cwd, p.sessions]), [['/w/app', 1], ['/w/other', 1]]);
+  assert.strictEqual(r.sessions[0].id, 's1');
 });
 
 test('単価がわからないモデルは数えない', () => {
