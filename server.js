@@ -44,6 +44,23 @@ function augmentPath() {
   if (add.length) process.env[key] = [...cur, ...add].join(sep);
 }
 augmentPath();
+
+// macOS: npm で入れた node-pty の spawn-helper に実行権限が付かないことがあり、
+// そのままだと「posix_spawnp failed」でセッションを起動できない。起動時に権限を直す
+function ensurePtyHelper() {
+  if (process.platform !== 'darwin') return;
+  let dir;
+  try { dir = path.dirname(require.resolve('node-pty/package.json')); } catch (_) { return; }
+  const candidates = [path.join(dir, 'build', 'Release', 'spawn-helper')];
+  try { for (const d of fs.readdirSync(path.join(dir, 'prebuilds'))) candidates.push(path.join(dir, 'prebuilds', d, 'spawn-helper')); } catch (_) { /* ignore */ }
+  for (const f of candidates) {
+    try {
+      const st = fs.statSync(f);
+      if (!(st.mode & 0o111)) fs.chmodSync(f, st.mode | 0o755);
+    } catch (_) { /* ないものは飛ばす */ }
+  }
+}
+ensurePtyHelper();
 const SCROLLBACK_LIMIT = 200 * 1024; // 再接続時に再生するバッファ上限(文字数)
 
 // ---- Claude Code hooks 連携 ----

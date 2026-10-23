@@ -89,7 +89,9 @@ function createWorktree(cwd, id, dir) {
   if (git(root, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`], { allowFail: true })) branch = `${branch}-${Date.now().toString(36)}`;
   git(root, ['worktree', 'add', '-b', branch, wtPath, head]);
   // サブフォルダで起動していたら、worktree の中でも同じサブフォルダにする
-  const rel = path.relative(root, path.resolve(cwd));
+  // macOS の /var → /private/var のようなシンボリックリンクがあっても比べられるよう、実体のパスで比べる
+  const real = (p) => { try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); } };
+  const rel = path.relative(real(root), real(cwd));
   // (空のフォルダは git に入らないので、なければ作る)
   const workdir = rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? path.join(wtPath, rel) : wtPath;
   try { fs.mkdirSync(workdir, { recursive: true }); } catch (_) { /* ignore */ }
