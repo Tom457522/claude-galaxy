@@ -1,6 +1,6 @@
 'use strict';
-// 窓口: 上部の入力欄に「やりたいこと」を書くと、どのフォルダで・どの方法で動かすかの案を作り、
-// 確認・修正してから実行する(Ctrl+K / ⌘K で入力欄へ)
+// 窓口: 「やりたいこと」から、どのフォルダで・どの方法で動かすかの案を作り、確認・修正してから実行する
+// (入口はコマンドパレット。当てはまる画面や操作がないとき、ここに回ってくる)
 
 (function () {
   const $ = (s) => document.querySelector(s);
@@ -44,29 +44,29 @@
     $('#dp-model').value = plan.model || '';
     $('#dp-perm').value = plan.permissionMode || '';
     $('#dp-mcp').innerHTML = window.ToolsView.pickerHtml(null);
+    $('#dp-memory').value = '';
     const how = plan.router === 'claude' ? 'Claude が振り分けました' : '簡単な規則で振り分けました';
     $('#dp-reason').textContent = [how, plan.reason, plan.note].filter(Boolean).join('  ・  ');
   }
 
-  async function makePlan(useClaude) {
-    const text = $('#cmd-input').value.trim() || S.text;
-    if (!text || S.busy) return;
-    S.text = text;
+  // text の実行案を作って、確認ダイアログを開く(コマンドパレットから呼ばれる)
+  async function makePlan(text, useClaude = true) {
+    const req = String(text || S.text || '').trim();
+    if (!req || S.busy) return;
+    S.text = req;
     S.busy = true;
-    $('#cmd-input').disabled = true;
-    $('#cmd-go').textContent = '考え中…';
     $('#dp-error').classList.add('hidden');
+    const closeToast = UI.toast('実行案を考えています…', { timeout: 90000 });
     try {
-      const plan = await api('POST', '/api/dispatch/plan', { text, roots: roots(), useClaude });
+      const plan = await api('POST', '/api/dispatch/plan', { text: req, roots: roots(), useClaude });
       fill(plan);
       if (!$('#dlg-dispatch').open) $('#dlg-dispatch').showModal();
       $('#dp-run').focus();
     } catch (e) {
-      alert(e.message);
+      UI.toast(e.message, { type: 'error' });
     } finally {
       S.busy = false;
-      $('#cmd-input').disabled = false;
-      $('#cmd-go').textContent = '➤';
+      closeToast();
     }
   }
 
@@ -82,11 +82,11 @@
       model: $('#dp-model').value.trim(),
       permissionMode: mode === 'job' ? $('#dp-perm').value : '',
       mcpServers: window.ToolsView.pickerValue($('#dp-mcp')),
+      memory: $('#dp-memory').value.trim(),
     };
     try {
       const r = await api('POST', '/api/dispatch/run', body);
       $('#dlg-dispatch').close();
-      $('#cmd-input').value = '';
       S.text = '';
       if (r.kind === 'session' && S.opts.onSession) S.opts.onSession(r.session);
       if (r.kind === 'job' && S.opts.onJob) S.opts.onJob(r.job);
@@ -97,21 +97,11 @@
   }
 
   function bind() {
-    $('#cmd-form').addEventListener('submit', (e) => { e.preventDefault(); makePlan(true); });
     $('#dp-form').addEventListener('submit', run);
     $('#dp-cancel').addEventListener('click', () => $('#dlg-dispatch').close());
-    $('#dp-reroute').addEventListener('click', () => makePlan(true));
+    $('#dp-reroute').addEventListener('click', () => makePlan(S.text, true));
     for (const r of document.querySelectorAll('input[name="dp-mode"]')) r.addEventListener('change', () => setMode(r.value));
-    window.addEventListener('keydown', (e) => {
-      // ターミナル内の Ctrl+K(行の削除)は奪わない
-      if (e.target.closest && e.target.closest('.xterm')) return;
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'k' || e.key === 'K')) {
-        e.preventDefault();
-        $('#cmd-input').focus();
-        $('#cmd-input').select();
-      }
-    });
   }
 
-  window.DispatchView = { init(opts) { S.opts = opts || {}; bind(); } };
+  window.DispatchView = { init(opts) { S.opts = opts || {}; bind(); }, plan: (text) => makePlan(text, true) };
 })();

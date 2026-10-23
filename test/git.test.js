@@ -52,3 +52,47 @@ test('worktree: 作成・差分・削除(ブランチは残る)', { skip: !hasGi
   const wt2 = gitx.createWorktree(repo, 's9', path.join(home, 'wts'));
   assert.notStrictEqual(wt2.branch, 'galaxy/s9');
 });
+
+test('取り込み: コミット → 元のブランチへマージ、競合したら元に戻す', { skip: !hasGit && 'git がありません' }, () => {
+  const { repo, g } = makeRepo();
+  const wt = gitx.createWorktree(repo, 'm1', path.join(home, 'wts-m'));
+  assert.throws(() => gitx.mergeInto(wt), /取り込むコミットがありません/);
+  fs.writeFileSync(path.join(wt.path, 'b.txt'), 'new\n');
+  assert.strictEqual(gitx.commitAll(wt, 'add b').committed, true);
+  assert.strictEqual(gitx.commitAll(wt, 'nothing').committed, false);
+  const r = gitx.mergeInto(wt);
+  assert.strictEqual(r.merged, true);
+  assert.strictEqual(r.commits, 1);
+  assert.ok(fs.existsSync(path.join(repo, 'b.txt')));
+
+  // 競合: 同じ行を両方で変える
+  const wt2 = gitx.createWorktree(repo, 'm2', path.join(home, 'wts-m'));
+  fs.writeFileSync(path.join(wt2.path, 'a.txt'), 'from worktree\n');
+  gitx.commitAll(wt2, 'wt change');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'from main\n');
+  g('commit', '-qam', 'main change');
+  const head = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  assert.throws(() => gitx.mergeInto(wt2), /競合/);
+  assert.strictEqual(execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), head);
+  assert.strictEqual(execFileSync('git', ['-C', repo, 'status', '--porcelain'], { encoding: 'utf8' }).trim(), '');
+
+  // 元のリポジトリに未コミットの変更があるときは止める
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'dirty\n');
+  assert.throws(() => gitx.mergeInto(wt2), /コミットしていない変更/);
+});
+
+test('push と PR 作成画面の URL', { skip: !hasGit && 'git がありません' }, () => {
+  const { repo, g } = makeRepo();
+  const bare = path.join(home, `origin-${Date.now()}.git`);
+  execFileSync('git', ['init', '-q', '--bare', bare]);
+  g('remote', 'add', 'origin', bare);
+  const wt = gitx.createWorktree(repo, 'p1', path.join(home, 'wts-p'));
+  fs.writeFileSync(path.join(wt.path, 'c.txt'), 'c\n');
+  gitx.commitAll(wt, 'c');
+  const r = gitx.pushBranch(wt);
+  assert.strictEqual(r.pushed, true);
+  assert.match(execFileSync('git', ['-C', bare, 'branch'], { encoding: 'utf8' }), /galaxy\/p1/);
+  assert.strictEqual(gitx.compareUrl('git@github.com:me/app.git', 'main', 'galaxy/s1'), 'https://github.com/me/app/compare/main...galaxy/s1?expand=1');
+  assert.match(gitx.compareUrl('https://gitlab.com/g/app.git', 'main', 'x'), /merge_requests\/new/);
+  assert.strictEqual(gitx.compareUrl('/local/path', 'main', 'x'), null);
+});

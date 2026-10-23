@@ -22,7 +22,7 @@ function stripResumeFlags(rest) {
 
 // 起動コマンドが claude の対話起動なら、先頭語の直後に --settings を差し込む
 //   resumeId を渡すと、--resume <id> も付ける(会話の再開)。mcp を渡すと --mcp-config も付ける
-function injectSettings(cmdline, { settingsFile, resumeId, mcp } = {}) {
+function injectSettings(cmdline, { settingsFile, resumeId, mcp, extra = '' } = {}) {
   const m = /^("[^"]+"|\S+)([\s\S]*)$/.exec(String(cmdline || '').trim());
   if (!m) return { cmd: cmdline, injected: false };
   const first = m[1].replace(/^"|"$/g, '');
@@ -39,7 +39,8 @@ function injectSettings(cmdline, { settingsFile, resumeId, mcp } = {}) {
   }
   // --mcp-config は複数の値を取るので、直後に --settings を置いて区切る
   const mcpArg = mcp ? ` --mcp-config "${fwd(mcp)}"` : '';
-  return { cmd: `${m[1]}${mcpArg} --settings "${fwd(settingsFile || '')}"${resume}${rest}`, injected: true, resumed: !!resume };
+  // extra: こちらで足す引数(値は呼び出し側でクォート済みのもの)
+  return { cmd: `${m[1]}${mcpArg} --settings "${fwd(settingsFile || '')}"${resume}${extra ? ` ${extra}` : ''}${rest}`, injected: true, resumed: !!resume };
 }
 
 const isClaudeCommand = (cmdline) => injectSettings(cmdline).injected;

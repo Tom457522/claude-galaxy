@@ -176,15 +176,82 @@ test('Claude Galaxy サーバー', { skip }, async (t) => {
     assert.match(out.output, /fake-server/);
   });
 
+  await t.test('エージェントのトークン: 知らないトークンは拒否し、呼び出し元は本文ではなくトークンで決める', async () => {
+    for (const p of ['/api/hook', '/api/bus', '/api/permission']) {
+      const r = await fetch(base + p, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Galaxy-Token': 'nope' }, body: JSON.stringify({ sessionId: 's1', from: 's1' }) });
+      assert.strictEqual(r.status, 401, p);
+    }
+  });
+
+  await t.test('自己診断', async () => {
+    const d = await api('GET', '/api/doctor');
+    const by = Object.fromEntries(d.results.map((r) => [r.id, r]));
+    for (const id of ['node', 'claude', 'hook', 'mcp', 'git', 'data']) assert.strictEqual(by[id].status, 'ok', `${id}: ${by[id].detail}`);
+  });
+
+  await t.test('共有メモリを最初に渡す(--append-system-prompt-file)', async () => {
+    await api('PUT', '/api/board/memory', { key: 'team/db', value: 'PostgreSQL を使う', tags: ['decision'] });
+    const j = await api('POST', '/api/jobs', { name: 'mem', cwd: home, prompt: 'ARGS', memory: 'tag:decision' });
+    const done = await finished(j.id);
+    const r = JSON.parse(done.result)[0];
+    assert.ok(r.args.includes('--append-system-prompt-file'));
+    assert.match(r.memory, /team\/db[\s\S]*PostgreSQL を使う/);
+  });
+
+  await t.test('予算: 上限を超えるとジョブを待たせ、上限を外すと動く', async () => {
+    await api('PUT', '/api/settings', { budgetDailyUsd: 0.01, budgetJobUsd: 0.5 });
+    const b = await api('GET', '/api/budget');
+    assert.ok(b.over, JSON.stringify(b));
+    const j = await api('POST', '/api/jobs', { name: 'blocked', cwd: home, prompt: 'ARGS' });
+    const q = await waitFor(async () => { const x = await job(j.id); return x.blockedBy && x; }, { label: 'blocked' });
+    assert.strictEqual(q.status, 'queued');
+    await api('PUT', '/api/settings', { budgetDailyUsd: 0 });
+    const done = await finished(j.id);
+    const r = JSON.parse(done.result)[0];
+    assert.strictEqual(r.args[r.args.indexOf('--max-budget-usd') + 1], '0.5'); // 既定の上限
+    await api('PUT', '/api/settings', { budgetJobUsd: 0 });
+  });
+
+  await t.test('worktree の変更を元のブランチに取り込む', async () => {
+    const repo = path.join(home, 'repo');
+    const j = await api('POST', '/api/jobs', { name: 'edit2', cwd: repo, prompt: 'EDIT', worktree: true });
+    await finished(j.id);
+    const r = await api('POST', '/api/worktree/merge', { agent: j.id, commitFirst: true, message: 'from job' });
+    assert.strictEqual(r.merged, true);
+    assert.ok(fs.existsSync(path.join(repo, 'edited-by-job.txt')));
+  });
+
+  await t.test('ジョブのつなぎ(オートメーション「ジョブのあと」)', async () => {
+    const a1 = await api('POST', '/api/automations', { name: 'step1', kind: 'cron', cron: '0 3 * * *', template: { prompt: 'first', cwd: home } });
+    await api('POST', '/api/automations', { name: 'step2', kind: 'after', afterAutomationId: a1.id, template: { prompt: 'after {{prevStatus}}' } });
+    await api('POST', `/api/automations/${a1.id}/run`);
+    const second = await waitFor(async () => (await api('GET', '/api/jobs')).jobs.find((x) => x.name === 'step2'), { label: 'chained job' });
+    assert.strictEqual(second.prompt, 'after done');
+    assert.strictEqual(second.chainDepth, 1);
+  });
+
+  await t.test('全文検索', async () => {
+    const hits = await api('GET', `/api/search?q=${encodeURIComponent('PostgreSQL')}`);
+    assert.ok(hits.some((h) => h.kind === 'memory' && h.id === 'team/db'));
+  });
+
+  await t.test('バックアップを予約すると、次の起動で反映する', async () => {
+    const b = await api('GET', '/api/backup');
+    b.files['settings.json'] = { ...b.files['settings.json'], maxConcurrentJobs: 7 };
+    const r = await api('POST', '/api/restore', { bundle: b });
+    assert.ok(r.staged.includes('settings.json'));
+  });
+
   await t.test('再起動しても、セッションとジョブの記録が残る', async () => {
     await stop();
     await start();
+    assert.strictEqual((await api('GET', '/api/settings')).maxConcurrentJobs, 7); // 予約した復元が反映された
     const sessions = await api('GET', '/api/sessions');
     assert.strictEqual(sessions[0].name, 'lead');
     assert.strictEqual(sessions[0].restored, true);
     assert.strictEqual(sessions[0].alive, false);
     const jobs = (await api('GET', '/api/jobs')).jobs;
     assert.ok(jobs.some((j) => j.name === 'parent' && j.status === 'done'));
-    assert.strictEqual((await api('GET', '/api/board')).memory[0].key, 'proj/x');
+    assert.ok((await api('GET', '/api/board')).memory.some((m) => m.key === 'proj/x'));
   });
 });

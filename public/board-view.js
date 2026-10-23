@@ -34,7 +34,7 @@
         `<div class="bm-head"><b>${esc(who(m.from, m.fromName))}</b><small>${esc(m.from)}</small> → ` +
         `<b>${esc(who(m.to, m.toName))}</b>${m.to !== 'user' && m.to !== 'all' ? `<small>${esc(m.to)}</small>` : ''}` +
         `<span class="bm-time">${fmtTime(m.at)}</span></div>` +
-        `<div class="bm-text">${esc(m.text)}</div></div>`;
+        `<div class="bm-text">${UI.markdown(m.text)}</div></div>`;
     }).join('') : '<p class="jobs-empty">メッセージはまだありません。エージェントは MCP ツール send_message で送ります。</p>';
     if (atBottom || !S.rendered) box.scrollTop = box.scrollHeight;
     S.rendered = true;
@@ -105,15 +105,15 @@
         await api('POST', '/api/board/messages', { to: $('#bm-to').value, text, asPrompt: $('#bm-prompt').checked });
         $('#bm-text').value = '';
         load();
-      } catch (err) { alert(err.message); }
+      } catch (err) { UI.toast(err.message, { type: 'error' }); }
     });
     $('#bm-text').addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('#bm-form').requestSubmit();
     });
     $('#bm-to').addEventListener('change', renderTo);
     $('#bm-clear').addEventListener('click', async () => {
-      if (!confirm('メッセージをすべて消しますか?(共有メモリは消えません)')) return;
-      try { await api('DELETE', '/api/board/messages'); load(); } catch (e) { alert(e.message); }
+      if (!await UI.confirm('メッセージをすべて消しますか?(共有メモリは消えません)')) return;
+      try { await api('DELETE', '/api/board/messages'); load(); } catch (e) { UI.toast(e.message, { type: 'error' }); }
     });
     $('#mem-search').addEventListener('input', (e) => { S.query = e.target.value; renderMemory(); });
     $('#mem-list').addEventListener('click', async (e) => {
@@ -122,8 +122,8 @@
       const key = el.dataset.key;
       const act = e.target.closest('[data-mact]')?.dataset.mact;
       if (act === 'del') {
-        if (!confirm(`「${key}」を削除しますか?`)) return;
-        try { await api('DELETE', `/api/board/memory?key=${encodeURIComponent(key)}`); load(); } catch (err) { alert(err.message); }
+        if (!await UI.confirm(`「${key}」を削除しますか?`)) return;
+        try { await api('DELETE', `/api/board/memory?key=${encodeURIComponent(key)}`); load(); } catch (err) { UI.toast(err.message, { type: 'error' }); }
       } else if (act === 'edit') {
         const m = S.memory.find((x) => x.key === key);
         $('#mf-key').value = m.key;
@@ -145,10 +145,7 @@
         });
         $('#mf-key').value = ''; $('#mf-value').value = ''; $('#mf-tags').value = '';
         load();
-      } catch (err) { alert(err.message); }
-    });
-    $('#bus-on').addEventListener('change', async (e) => {
-      try { await api('PUT', '/api/settings', { busEnabled: e.target.checked }); } catch (err) { alert(err.message); }
+      } catch (err) { UI.toast(err.message, { type: 'error' }); }
     });
   }
 
@@ -166,7 +163,7 @@
       clearTimeout(S.timer);
       S.timer = setTimeout(load, S.visible ? 100 : 1500);
     },
-    onSettings(st) { $('#bus-on').checked = !!st.busEnabled; },
     resync: load,
+    searchMemory(q) { $('#mem-search').value = q; S.query = q; load(); },
   };
 })();

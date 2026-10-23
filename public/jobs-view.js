@@ -22,7 +22,7 @@
     ['auto', 'auto(安全性の判定に任せる)'],
     ['bypassPermissions', 'bypassPermissions(すべて確認なし・注意)'],
   ];
-  const KINDS = { cron: '⏱ 時刻', files: '✎ ファイル変更', git: '⑂ コミット' };
+  const KINDS = { cron: '⏱ 時刻', files: '✎ ファイル変更', git: '⑂ コミット', after: '↪ ジョブのあと' };
   const CRON_PRESETS = [
     ['毎時 0 分', '0 * * * *'], ['毎朝 9 時', '0 9 * * *'], ['平日 9 時', '0 9 * * 1-5'],
     ['毎晩 2 時', '0 2 * * *'], ['毎週月曜 9 時', '0 9 * * 1'], ['15 分ごと', '*/15 * * * *'],
@@ -70,7 +70,7 @@
     const time = live ? `<span data-since="${j.startedAt}"></span>`
       : j.startedAt && j.endedAt ? fmtDur(j.endedAt - j.startedAt) : fmtTime(j.createdAt);
     const sub = live ? (j.lastTool ? `▸ ${j.lastTool}  ` : '') + firstLine(j.lastText)
-      : j.status === 'queued' ? firstLine(j.prompt)
+      : j.status === 'queued' ? (j.blockedBy ? `⏸ ${j.blockedBy}` : firstLine(j.prompt))
         : j.error ? `⚠ ${firstLine(j.error)}` : firstLine(j.result);
     const acts = [
       j.status === 'queued' || live ? '<button class="btn" data-jact="cancel">中止</button>' : '',
@@ -106,7 +106,7 @@
     const spent = all.reduce((n, j) => n + (j.costUsd || 0), 0);
     $('#jobs-spent').textContent = spent ? `合計 ${fmtCost(spent)}` : '';
     tick();
-    if (S.opts.onCounts) S.opts.onCounts({ running, queued: active.length - running });
+    if (S.opts.onCounts) S.opts.onCounts({ running, queued: active.length - running, jobs: all });
     if (S.detail && S.jobs.has(S.detail)) renderDetailHead(S.jobs.get(S.detail));
   }
 
@@ -116,7 +116,9 @@
 
   // ---------- オートメーション ----------
   function autoCard(a) {
-    const when = a.kind === 'cron' ? `<code>${esc(a.cron)}</code>  次回 ${fmtTime(a.nextRun)}`
+    const prev = a.kind === 'after' ? S.autos.get(a.afterAutomationId) : null;
+    const when = a.kind === 'after' ? `「${esc(prev ? prev.name : a.afterAutomationId)}」のジョブが${a.afterStatus === 'any' ? '終わったら' : '完了したら'}`
+      : a.kind === 'cron' ? `<code>${esc(a.cron)}</code>  次回 ${fmtTime(a.nextRun)}`
       : `${esc(a.watchPath)}${a.kind === 'files' ? `(${a.debounceSec}秒まとめる)` : ''}`;
     const last = a.lastFiredAt ? `前回 ${fmtTime(a.lastFiredAt)}${a.lastJobId ? ` → ${esc(a.lastJobId)}` : ''}` : 'まだ動いていません';
     return `<div class="auto-card${a.enabled ? '' : ' off'}" data-auto="${esc(a.id)}">` +
@@ -181,7 +183,9 @@
     const log = $('#jd-log');
     const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
     log.innerHTML = list.length
-      ? list.map((e) => `<div class="jl jl-${e.kind}${e.error ? ' jl-err' : ''}">${e.kind === 'tool' ? '▸ ' : e.kind === 'result' ? '◆ 結果\n' : ''}${esc(e.text)}</div>`).join('')
+      ? list.map((e) => (e.kind === 'tool'
+        ? `<div class="jl jl-tool">▸ ${esc(e.text)}</div>`
+        : `<div class="jl jl-${e.kind}${e.error ? ' jl-err' : ''}">${e.kind === 'result' ? '<div class="jl-label">◆ 結果</div>' : ''}${UI.markdown(e.text)}</div>`)).join('')
       : '<p class="jobs-empty">まだ出力はありません</p>';
     if (atBottom) log.scrollTop = log.scrollHeight;
   }
@@ -195,11 +199,13 @@
   function setKind(kind) {
     for (const r of document.querySelectorAll('input[name="af-kind"]')) r.checked = r.value === kind;
     $('#af-cron-wrap').classList.toggle('hidden', kind !== 'cron');
-    $('#af-path-wrap').classList.toggle('hidden', kind === 'cron');
+    $('#af-path-wrap').classList.toggle('hidden', kind === 'cron' || kind === 'after');
     $('#af-debounce-wrap').classList.toggle('hidden', kind !== 'files');
+    $('#af-after-wrap').classList.toggle('hidden', kind !== 'after');
     $('#af-vars').textContent = kind === 'cron' ? '使える変数: {{date}} {{time}}'
       : kind === 'files' ? '使える変数: {{files}}(変わったファイル){{date}} {{time}}'
-        : '使える変数: {{commit}} {{commitMessage}} {{date}} {{time}}';
+        : kind === 'after' ? '使える変数: {{prevResult}}(前のジョブの結果){{prevJob}} {{prevStatus}} {{prevCwd}}'
+          : '使える変数: {{commit}} {{commitMessage}} {{date}} {{time}}';
   }
 
   function openForm(mode, data = {}) {
@@ -223,6 +229,11 @@
     $('#af-path').value = data.watchPath || '';
     $('#af-debounce').value = data.debounceSec || 10;
     $('#af-skip').checked = data.skipIfRunning !== false;
+    $('#af-after').innerHTML = [...S.autos.values()].filter((a) => a.id !== S.editing)
+      .map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('') || '<option value="">(先にほかのオートメーションを作ってください)</option>';
+    if (data.afterAutomationId) $('#af-after').value = data.afterAutomationId;
+    $('#af-after-status').value = data.afterStatus || 'done';
+    $('#jf-memory').value = t.memory || '';
     setKind(data.kind || 'cron');
     $('#jf-error').classList.add('hidden');
     $('#dlg-job').showModal();
@@ -239,6 +250,7 @@
       maxBudgetUsd: $('#jf-budget').value.trim(),
       priority: $('#jf-priority').value,
       worktree: $('#jf-worktree').checked,
+      memory: $('#jf-memory').value.trim(),
       mcpServers: window.ToolsView.pickerValue($('#jf-mcp')),
     };
   }
@@ -257,6 +269,8 @@
           name: $('#jf-name').value.trim(),
           kind: document.querySelector('input[name="af-kind"]:checked').value,
           cron: $('#af-cron').value.trim(),
+          afterAutomationId: $('#af-after').value,
+          afterStatus: $('#af-after-status').value,
           watchPath: $('#af-path').value.trim(),
           debounceSec: Number($('#af-debounce').value) || 10,
           skipIfRunning: $('#af-skip').checked,
@@ -279,11 +293,21 @@
     try {
       if (act === 'cancel') await api('POST', `/api/jobs/${id}/cancel`);
       else if (act === 'retry') { const n = await api('POST', `/api/jobs/${id}/retry`); S.jobs.set(n.id, n); renderJobs(); }
-      else if (act === 'remove') { await api('DELETE', `/api/jobs/${id}`); S.jobs.delete(id); renderJobs(); }
+      else if (act === 'remove') {
+        // すぐには消さず、数秒「元に戻す」を出してから消す
+        const saved = S.jobs.get(id);
+        S.jobs.delete(id);
+        renderJobs();
+        let undone = false;
+        UI.toast(`「${saved ? saved.name : id}」を一覧から消しました`, {
+          action: { label: '元に戻す', fn: () => { undone = true; if (saved) { S.jobs.set(id, saved); renderJobs(); } } },
+        });
+        setTimeout(() => { if (!undone) api('DELETE', `/api/jobs/${id}`).catch(() => {}); }, 6200);
+      }
       else if (act === 'open') { const s = await api('POST', `/api/jobs/${id}/open`); if (S.opts.onOpenSession) S.opts.onOpenSession(s); }
       else if (act === 'diff') window.DiffView.open(id);
       else if (act === 'edit-copy' && j) openForm('job', { ...j, name: `${j.name} のコピー` });
-    } catch (e) { alert(e.message); }
+    } catch (e) { UI.toast(e.message, { type: 'error' }); }
   }
 
   async function onAutoAction(id, act, el) {
@@ -294,12 +318,12 @@
       else if (act === 'run') { const j = await api('POST', `/api/automations/${id}/run`); if (j) { S.jobs.set(j.id, j); renderJobs(); } }
       else if (act === 'edit') openForm('automation', a);
       else if (act === 'remove') {
-        if (!confirm(`オートメーション「${a.name}」を削除しますか?`)) return;
+        if (!await UI.confirm(`オートメーション「${a.name}」を削除しますか?`)) return;
         await api('DELETE', `/api/automations/${id}`);
         S.autos.delete(id);
         renderAutos();
       }
-    } catch (e) { alert(e.message); if (act === 'toggle') el.checked = !el.checked; }
+    } catch (e) { UI.toast(e.message, { type: 'error' }); if (act === 'toggle') el.checked = !el.checked; }
   }
 
   function bind() {
@@ -311,7 +335,7 @@
     for (const r of document.querySelectorAll('input[name="af-kind"]')) r.addEventListener('change', () => setKind(r.value));
     $('#af-presets').addEventListener('click', (e) => { const b = e.target.closest('[data-cron]'); if (b) $('#af-cron').value = b.dataset.cron; });
     $('#jobs-max').addEventListener('change', async (e) => {
-      try { await api('PUT', '/api/settings', { maxConcurrentJobs: Number(e.target.value) }); } catch (err) { alert(err.message); }
+      try { await api('PUT', '/api/settings', { maxConcurrentJobs: Number(e.target.value) }); } catch (err) { UI.toast(err.message, { type: 'error' }); }
     });
     $('#jobs').addEventListener('click', (e) => {
       const b = e.target.closest('[data-jact]');
@@ -369,6 +393,10 @@
     onAutomationRemoved(id) { S.autos.delete(id); renderAutos(); },
     onSettings(st) { if (st.maxConcurrentJobs) $('#jobs-max').value = String(st.maxConcurrentJobs); },
     get: (id) => S.jobs.get(id),
+    list: () => [...S.jobs.values()],
+    autos: () => [...S.autos.values()],
+    openDetail,
+    newAutomation: () => openForm('automation'),
     newJob: (prefill) => openForm('job', prefill || {}),
   };
 })();

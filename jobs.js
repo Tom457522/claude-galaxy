@@ -57,6 +57,7 @@ function normalize(input, { strict = false } = {}) {
     priority,
     resumeId,
     worktree: !!input.worktree, // 別の git worktree(ブランチ)で実行する
+    memory: str(input.memory, 500), // 共有メモリから最初に渡すもの(キーの先頭・タグ・語。空白区切り)
     mcpServers: Array.isArray(input.mcpServers) ? input.mcpServers.filter((x) => typeof x === 'string').slice(0, 30) : null,
   };
 }
@@ -93,6 +94,9 @@ function createJobManager(deps) {
     claudeSessionId: j.claudeSessionId,
     lastText: j.lastText,
     lastTool: j.lastTool,
+    blockedBy: j.blockedBy || '',
+    memory: j.memory || '',
+    chainDepth: j.chainDepth || 0,
     result: j.result,
     isError: j.isError,
     error: j.error,
@@ -177,6 +181,7 @@ function createJobManager(deps) {
       parent: meta.parent || null, // 登録したエージェント(セッション / ジョブの ID)
       automationId: meta.automationId || null,
       depth: meta.depth || 0, // エージェントがジョブを登録した深さ(暴走防止)
+      chainDepth: meta.chainDepth || 0, // オートメーションの「ジョブのあとに」でつながった深さ
       claudeSessionId: null,
       lastText: '',
       lastTool: '',
@@ -201,6 +206,14 @@ function createJobManager(deps) {
   const running = () => [...jobs.values()].filter((j) => j.status === 'running').length;
 
   function pump() {
+    // 予算の上限に達していたら起動しない(待ちのジョブに理由を表示する)
+    const blocked = deps.blockReason ? deps.blockReason() : '';
+    for (const j of jobs.values()) {
+      if (j.status !== 'queued') continue;
+      const note = blocked || '';
+      if ((j.blockedBy || '') !== note) { j.blockedBy = note; changed(j); }
+    }
+    if (blocked) return;
     const max = Math.max(1, deps.getMaxConcurrent());
     while (running() < max) {
       const next = [...jobs.values()].filter((j) => j.status === 'queued')

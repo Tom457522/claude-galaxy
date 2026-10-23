@@ -99,6 +99,8 @@ function closeAll() { for (const id of [...streams.keys()]) closeLog(id); }
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const SETTINGS_DEFAULTS = {
   permissionInbox: true, busEnabled: true, maxConcurrentJobs: 2, auditEnabled: true, auditDays: 30, worktreeDir: '', dispatchModel: 'haiku',
+  budgetDailyUsd: 0, budgetJobUsd: 0, budgetSessionWarnUsd: 0, // 0 は「上限なし」
+  notifyDesktop: true, // 承認待ち・ジョブの完了・予算をデスクトップに通知する(画面側で使う)
 };
 
 function loadSettings() {
@@ -114,6 +116,56 @@ function saveSettings(settings) {
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
 }
 
+// ---- バックアップと復元 ----
+// 設定・一覧などの小さいファイルだけを 1 つの JSON にまとめる(画面出力のログと監査ログは含めない)
+const BACKUP_FILES = ['settings.json', 'apps.json', 'sessions.json', 'jobs.json', 'automations.json', 'bus.json', 'mcp-servers.json', 'spend.json'];
+const PENDING_DIR = path.join(DATA_DIR, 'restore-pending');
+
+function exportBackup({ secrets = false } = {}) {
+  const files = {};
+  for (const name of BACKUP_FILES) {
+    let data;
+    try { data = JSON.parse(fs.readFileSync(path.join(DATA_DIR, name), 'utf8')); } catch (_) { continue; }
+    // MCP サーバーの環境変数・ヘッダー(秘密が入りうる)は、指定がなければ伏せる
+    if (name === 'mcp-servers.json' && !secrets && Array.isArray(data.servers)) {
+      data.servers = data.servers.map((s) => ({
+        ...s,
+        env: Object.fromEntries(Object.keys(s.env || {}).map((k) => [k, ''])),
+        headers: Object.fromEntries(Object.keys(s.headers || {}).map((k) => [k, ''])),
+      }));
+    }
+    files[name] = data;
+  }
+  return { app: 'claude-galaxy', version: 1, createdAt: new Date().toISOString(), secrets, files };
+}
+
+// 復元は、動いているサーバーの保存で上書きされないよう、次の起動時に反映する
+function stageRestore(bundle) {
+  if (!bundle || bundle.app !== 'claude-galaxy' || typeof bundle.files !== 'object') throw new Error('Claude Galaxy のバックアップではありません');
+  const names = Object.keys(bundle.files).filter((n) => BACKUP_FILES.includes(n));
+  if (!names.length) throw new Error('復元できるファイルが入っていません');
+  fs.rmSync(PENDING_DIR, { recursive: true, force: true });
+  fs.mkdirSync(PENDING_DIR, { recursive: true });
+  for (const n of names) fs.writeFileSync(path.join(PENDING_DIR, n), JSON.stringify(bundle.files[n], null, 2), { mode: 0o600 });
+  return names;
+}
+
+// 起動時(各データを読み込む前)に呼ぶ。元のファイルは .bak として残す
+function applyPendingRestore() {
+  let names = [];
+  try { names = fs.readdirSync(PENDING_DIR).filter((n) => BACKUP_FILES.includes(n)); } catch (_) { return []; }
+  for (const n of names) {
+    const dest = path.join(DATA_DIR, n);
+    try { if (fs.existsSync(dest)) fs.copyFileSync(dest, `${dest}.bak`); } catch (_) { /* ignore */ }
+    fs.copyFileSync(path.join(PENDING_DIR, n), dest);
+  }
+  fs.rmSync(PENDING_DIR, { recursive: true, force: true });
+  return names;
+}
+
+const pendingRestore = () => { try { return fs.readdirSync(PENDING_DIR); } catch (_) { return []; } };
+
 module.exports = {
   load, save, appendLog, closeLog, readLogTail, removeLog, closeAll, loadSettings, saveSettings, DATA_DIR,
+  exportBackup, stageRestore, applyPendingRestore, pendingRestore,
 };
