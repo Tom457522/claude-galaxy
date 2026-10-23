@@ -3,7 +3,9 @@
 //   kind 'cron'  : cron 式の時刻に(ローカル時刻。サーバーが止まっていた間の分は実行しない)
 //   kind 'files' : フォルダ内のファイルが変わったら(まとめて debounce 秒後に 1 回)
 //   kind 'git'   : リポジトリに新しいコミットができたら(HEAD を定期的に確認)
-// プロンプトでは {{date}} {{time}} {{files}} {{commit}} {{commitMessage}} {{automation}} が使える
+//   kind 'after' : 別のオートメーションのジョブが終わったら(ジョブのつなぎ。{{prevResult}} などで結果を渡せる)
+// プロンプトでは {{date}} {{time}} {{files}} {{commit}} {{commitMessage}} {{automation}}
+// {{prevJob}} {{prevStatus}} {{prevResult}} {{prevCwd}} が使える
 
 const fs = require('fs');
 const path = require('path');
@@ -13,7 +15,8 @@ const cron = require('./cron');
 const { DATA_DIR } = require('./store');
 
 const FILE = path.join(DATA_DIR, 'automations.json');
-const KINDS = ['cron', 'files', 'git'];
+const KINDS = ['cron', 'files', 'git', 'after'];
+const MAX_CHAIN = 10; // つなぎの深さの上限(輪になっても止まるように)
 const IGNORE_DIRS = /(^|[\\/])(node_modules|\.git|\.claude-galaxy|dist|build|\.next|\.cache|__pycache__|\.venv)([\\/]|$)/;
 const GIT_POLL_MS = 15000;
 const AFTER_RUN_GRACE_MS = 5000; // 自分のジョブが書き換えたファイルで再び動かないよう、終了直後は無視する
@@ -54,7 +57,9 @@ function createAutomations(deps) {
       enabled: input.enabled === undefined ? (prev.enabled ?? true) : !!input.enabled,
       kind,
       cron: kind === 'cron' ? str(input.cron, 100) : '',
-      watchPath: kind !== 'cron' ? str(input.watchPath, 1000) : '',
+      watchPath: kind === 'files' || kind === 'git' ? str(input.watchPath, 1000) : '',
+      afterAutomationId: kind === 'after' ? str(input.afterAutomationId, 40) : '',
+      afterStatus: kind === 'after' && input.afterStatus === 'any' ? 'any' : 'done',
       debounceSec: Math.min(3600, Math.max(2, Number(input.debounceSec) || prev.debounceSec || 10)),
       skipIfRunning: input.skipIfRunning === undefined ? (prev.skipIfRunning ?? true) : !!input.skipIfRunning,
       template: input.template && typeof input.template === 'object' ? input.template : (prev.template || {}),
@@ -65,7 +70,11 @@ function createAutomations(deps) {
     };
     if (!str(a.template.prompt, 100000)) throw new Error('プロンプトを入力してください');
     if (kind === 'cron') cron.parse(a.cron);
-    else a.watchPath = deps.resolveCwd(a.watchPath);
+    else if (kind === 'after') {
+      if (!a.afterAutomationId) throw new Error('どのオートメーションのあとに動かすかを選んでください');
+      if (a.afterAutomationId === a.id) throw new Error('自分自身のあとには動かせません');
+      if (!list.some((x) => x.id === a.afterAutomationId)) throw new Error('あとに続ける元のオートメーションが見つかりません');
+    } else a.watchPath = deps.resolveCwd(a.watchPath);
     if (kind === 'git' && !fs.existsSync(path.join(a.watchPath, '.git'))) {
       throw new Error(`git リポジトリではありません(.git がありません): ${a.watchPath}`);
     }
@@ -77,7 +86,7 @@ function createAutomations(deps) {
   }
 
   // ジョブを登録する。manual: 「今すぐ実行」
-  function fire(a, vars = {}, { manual = false } = {}) {
+  function fire(a, vars = {}, { manual = false, chainDepth = 0 } = {}) {
     const r = rt.get(a.id) || {};
     if (!manual && a.skipIfRunning && a.lastJobId && deps.isActive(a.lastJobId)) {
       a.lastSkipped = Date.now();
@@ -86,15 +95,18 @@ function createAutomations(deps) {
       return null;
     }
     const now = new Date();
-    const all = { date: now.toLocaleDateString(), time: now.toLocaleTimeString(), automation: a.name, files: '', commit: '', commitMessage: '', ...vars };
+    const all = {
+      date: now.toLocaleDateString(), time: now.toLocaleTimeString(), automation: a.name, files: '', commit: '', commitMessage: '',
+      prevJob: '', prevStatus: '', prevResult: '', prevCwd: '', ...vars,
+    };
     const t = a.template;
     try {
       const job = deps.submit({
         ...t,
         name: t.name || a.name,
         prompt: fill(String(t.prompt || ''), all),
-        cwd: t.cwd || (a.kind !== 'cron' ? a.watchPath : ''),
-      }, { source: 'automation', automationId: a.id });
+        cwd: t.cwd || (a.kind === 'after' ? all.prevCwd : a.kind !== 'cron' ? a.watchPath : ''),
+      }, { source: 'automation', automationId: a.id, chainDepth });
       a.lastFiredAt = Date.now();
       a.lastJobId = job.id;
       r.error = '';
@@ -193,6 +205,22 @@ function createAutomations(deps) {
     }
   }, 20000).unref();
 
+  // ジョブが終わったら、「このあとに動かす」オートメーションを登録する
+  function onJobFinished(job) {
+    if (!job.automationId || job.status === 'canceled') return;
+    if ((job.chainDepth || 0) >= MAX_CHAIN) return;
+    for (const a of list) {
+      if (!a.enabled || a.kind !== 'after' || a.afterAutomationId !== job.automationId) continue;
+      if (a.afterStatus === 'done' && job.status !== 'done') continue;
+      fire(a, {
+        prevJob: `${job.id} ${job.name}`,
+        prevStatus: job.status,
+        prevResult: String(job.result || job.error || '').slice(0, 8000),
+        prevCwd: job.cwd,
+      }, { chainDepth: (job.chainDepth || 0) + 1 });
+    }
+  }
+
   load();
   for (const a of list) arm(a);
 
@@ -225,6 +253,7 @@ function createAutomations(deps) {
       deps.onRemove(id);
       return true;
     },
+    onJobFinished,
     run(id) {
       const a = list.find((x) => x.id === id);
       if (!a) throw new Error('見つかりません');

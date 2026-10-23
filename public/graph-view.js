@@ -1072,5 +1072,5 @@
     if (S.graph) S.graph.pauseAnimation();
   }
 
-  window.GraphView = { init, show, hide, setSessions, goHome, focusFolder, _state: S };
+  window.GraphView = { init, show, hide, setSessions, goHome, focusFolder, openRoots: openRootsDialog, _state: S };
 }());

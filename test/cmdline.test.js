@@ -36,3 +36,8 @@ test('stripResumeFlags', () => {
   assert.strictEqual(stripResumeFlags(' --continue --verbose').trim(), '--verbose');
   assert.strictEqual(stripResumeFlags(' --resume --verbose').trim(), '--verbose');
 });
+
+test('extra の引数は --settings のあとに付ける', () => {
+  const r = injectSettings('claude --model x', { settingsFile: S, extra: '--append-system-prompt-file "/tmp/m.md"' });
+  assert.strictEqual(r.cmd, `claude --settings "${S}" --append-system-prompt-file "/tmp/m.md" --model x`);
+});

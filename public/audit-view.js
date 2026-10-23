@@ -27,6 +27,10 @@
     'job-end': { label: 'ジョブ終了', icon: '✓' },
     dispatch: { label: '窓口', icon: '➤' },
     'worktree-remove': { label: 'worktree 削除', icon: '⑂' },
+    'worktree-commit': { label: 'コミット', icon: '⑂' },
+    'worktree-merge': { label: '取り込み', icon: '⑂' },
+    'worktree-push': { label: 'push', icon: '⇡' },
+    restore: { label: '復元の予約', icon: '↺' },
   };
 
   const S = { list: [], visible: false, timer: null, diffAgent: null, opts: {} };
@@ -64,17 +68,63 @@
   }
 
   // ---------- 差分 ----------
+  // 差分をファイルごとに分ける
+  function splitFiles(text) {
+    const files = [];
+    let cur = null;
+    for (const l of String(text || '').split('\n')) {
+      if (l.startsWith('diff --git')) {
+        const m = / b\/(.+)$/.exec(l);
+        cur = { name: m ? m[1] : l.slice(11), lines: [], add: 0, del: 0, meta: [] };
+        files.push(cur);
+        continue;
+      }
+      if (!cur) continue;
+      if (/^(index |--- |\+\+\+ |new file|deleted file|similarity|rename |old mode|new mode)/.test(l)) { cur.meta.push(l); continue; }
+      if (l.startsWith('+')) cur.add++;
+      else if (l.startsWith('-')) cur.del++;
+      cur.lines.push(l);
+    }
+    return files;
+  }
+
+  const cls = (l) => (l.startsWith('@@') ? 'df-hunk' : l.startsWith('+') ? 'df-add' : l.startsWith('-') ? 'df-del' : '');
+
+  function unifiedHtml(lines) {
+    return lines.map((l) => `<div class="${cls(l)}">${esc(l) || ' '}</div>`).join('');
+  }
+
+  // 左右に並べる: 削除行と追加行の並びを組にして表示する
+  function splitHtml(lines) {
+    const rows = [];
+    let dels = [];
+    let adds = [];
+    const flush = () => {
+      const n = Math.max(dels.length, adds.length);
+      for (let i = 0; i < n; i++) rows.push([dels[i], adds[i]]);
+      dels = []; adds = [];
+    };
+    for (const l of lines) {
+      if (l.startsWith('-')) dels.push(l);
+      else if (l.startsWith('+')) adds.push(l);
+      else { flush(); rows.push(l.startsWith('@@') ? ['@@', l] : [l, l]); }
+    }
+    flush();
+    return `<table class="df-split">${rows.map(([a, b]) => (a === '@@'
+      ? `<tr class="df-hunk"><td colspan="2">${esc(b)}</td></tr>`
+      : `<tr><td class="${a === undefined ? 'df-empty' : cls(a)}">${a === undefined ? '' : esc(a.replace(/^[- ]/, '')) || ' '}</td>` +
+        `<td class="${b === undefined ? 'df-empty' : cls(b)}">${b === undefined ? '' : esc(b.replace(/^[+ ]/, '')) || ' '}</td></tr>`)).join('')}</table>`;
+  }
+
   function diffHtml(text) {
-    if (!text) return '<p class="jobs-empty">差分はありません</p>';
-    return text.split('\n').map((l) => {
-      let c = '';
-      if (l.startsWith('diff --git')) c = 'df-file';
-      else if (l.startsWith('@@')) c = 'df-hunk';
-      else if (l.startsWith('+') && !l.startsWith('+++')) c = 'df-add';
-      else if (l.startsWith('-') && !l.startsWith('---')) c = 'df-del';
-      else if (/^(index |--- |\+\+\+ |new file|deleted file|similarity|rename )/.test(l)) c = 'df-meta';
-      return `<div class="${c}">${esc(l) || ' '}</div>`;
-    }).join('');
+    const files = splitFiles(text);
+    if (!files.length) return '<p class="jobs-empty">差分はありません</p>';
+    const split = S.split;
+    const many = files.length > 8;
+    return files.map((f) => `<details class="df-filebox" ${many ? '' : 'open'}>` +
+      `<summary><span class="df-fname">${esc(f.name)}</span><span class="df-count"><b class="df-a">+${f.add}</b> <b class="df-d">−${f.del}</b></span>` +
+      `${f.meta.some((m) => m.startsWith('new file')) ? '<span class="mem-tag">新規</span>' : ''}${f.meta.some((m) => m.startsWith('deleted file')) ? '<span class="mem-tag">削除</span>' : ''}</summary>` +
+      `<div class="df-diff">${split ? splitHtml(f.lines) : unifiedHtml(f.lines)}</div></details>`).join('');
   }
 
   async function openDiff(agent) {
@@ -101,8 +151,9 @@
     if (d.commits && d.commits.length) parts.push(`<div class="df-sec"><b>コミット(${d.commits.length})</b><pre>${esc(d.commits.join('\n'))}</pre></div>`);
     if (d.stat) parts.push(`<div class="df-sec"><b>変更の概要</b><pre>${esc(d.stat)}</pre></div>`);
     if (d.untracked && d.untracked.length) parts.push(`<div class="df-sec"><b>新しいファイル(${d.untracked.length})</b><pre>${esc(d.untracked.join('\n'))}</pre></div>`);
-    parts.push(`<div class="df-diff">${diffHtml(d.diff)}</div>`);
+    parts.push(diffHtml(d.diff));
     $('#df-body').innerHTML = parts.join('');
+    S.lastDiff = d;
     $('#df-wt').classList.toggle('hidden', !wt || !!wt.removed);
   }
 
@@ -112,12 +163,42 @@
     const msg = force
       ? 'worktree を、コミットしていない変更ごと削除しますか?(ブランチとコミット済みの変更は残ります)'
       : 'worktree を削除しますか?(ブランチは残ります)';
-    if (!confirm(msg)) return;
+    if (!await UI.confirm(msg)) return;
     try {
       const r = await api('POST', '/api/worktree/remove', { agent, force });
-      alert(`worktree を削除しました。ブランチ ${r.branch} は残っています(git merge / git branch -D で片付けられます)。`);
+      UI.toast(`worktree を削除しました。ブランチ ${r.branch} は残っています(git merge / git branch -D で片付けられます)。`);
       openDiff(agent);
-    } catch (e) { alert(e.message); }
+    } catch (e) { UI.toast(e.message, { type: 'error' }); }
+  }
+
+  // worktree の変更を取り込む: コミット / 元のブランチにマージ / push して PR を作る
+  async function wtAction(kind) {
+    const agent = S.diffAgent;
+    if (!agent) return;
+    const message = $('#df-msg').value.trim();
+    const d = S.lastDiff || {};
+    const dirty = !!(d.diff && d.diff.trim()) || (d.untracked && d.untracked.length);
+    try {
+      if (kind === 'commit') {
+        const r = await api('POST', '/api/worktree/commit', { agent, message });
+        UI.toast(r.committed ? `コミットしました(${r.commit})` : 'コミットする変更はありません');
+      } else if (kind === 'merge') {
+        const squash = $('#df-squash').checked;
+        if (!await UI.confirm(`${d.branch} の変更を、元のリポジトリでいま開いているブランチに${squash ? '1 つのコミットにまとめて' : ''}取り込みますか?${dirty ? '\nコミットしていない変更は、先にコミットします。' : ''}`, { ok: '取り込む' })) return;
+        const r = await api('POST', '/api/worktree/merge', { agent, commitFirst: true, message, squash });
+        UI.toast(`${r.into} に取り込みました(${r.commits} コミット・${r.commit})。worktree は「worktree を削除」で片付けられます`, { timeout: 8000 });
+      } else if (kind === 'push') {
+        if (!await UI.confirm(`${d.branch} を origin に push しますか?${dirty ? '\nコミットしていない変更は、先にコミットします。' : ''}`, { ok: 'push する' })) return;
+        const r = await api('POST', '/api/worktree/push', { agent, commitFirst: true, message });
+        if (r.url) {
+          window.open(r.url, '_blank', 'noopener');
+          UI.toast('push しました。PR を作る画面を開きました');
+        } else {
+          UI.toast(`push しました(${r.remote})。PR はリポジトリのサイトで作ってください`, { timeout: 8000 });
+        }
+      }
+      openDiff(agent);
+    } catch (e) { UI.toast(e.message, { type: 'error' }); }
   }
 
   function bind() {
@@ -132,16 +213,24 @@
       const a = e.target.closest('[data-agent]');
       if (a) { $('#au-agent').value = a.dataset.agent; load(); }
     });
-    $('#au-on').addEventListener('change', async (e) => {
-      try { await api('PUT', '/api/settings', { auditEnabled: e.target.checked }); } catch (err) { alert(err.message); }
-    });
-    $('#au-keep').addEventListener('change', async (e) => {
-      try { await api('PUT', '/api/settings', { auditDays: Number(e.target.value) }); } catch (err) { alert(err.message); }
-    });
     $('#df-close').addEventListener('click', () => $('#dlg-diff').close());
     $('#df-reload').addEventListener('click', () => S.diffAgent && openDiff(S.diffAgent));
     $('#df-rm').addEventListener('click', () => removeWorktree(false));
     $('#df-rm-force').addEventListener('click', () => removeWorktree(true));
+    $('#df-commit').addEventListener('click', () => wtAction('commit'));
+    $('#df-merge').addEventListener('click', () => wtAction('merge'));
+    $('#df-push').addEventListener('click', () => wtAction('push'));
+    $('#df-split').addEventListener('change', (e) => {
+      S.split = e.target.checked;
+      try { localStorage.setItem('diffSplit', S.split ? '1' : '0'); } catch (_) { /* ignore */ }
+      if (S.lastDiff && !S.lastDiff.error) {
+        const body = $('#df-body');
+        for (const el of body.querySelectorAll('.df-filebox')) el.remove();
+        body.insertAdjacentHTML('beforeend', diffHtml(S.lastDiff.diff));
+      }
+    });
+    S.split = (() => { try { return localStorage.getItem('diffSplit') === '1'; } catch (_) { return false; } })();
+    $('#df-split').checked = S.split;
     $('#dlg-diff').addEventListener('close', () => { S.diffAgent = null; });
   }
 
@@ -151,10 +240,6 @@
     hide() { S.visible = false; },
     // 新しい記録が増えたら、表示中なら読み直す(まとめて)
     onEntry() { if (!S.visible) return; clearTimeout(S.timer); S.timer = setTimeout(load, 800); },
-    onSettings(st) {
-      $('#au-on').checked = st.auditEnabled !== false;
-      if (st.auditDays) $('#au-keep').value = String(st.auditDays);
-    },
     filterAgent(id) { $('#au-agent').value = id; load(); },
   };
   window.DiffView = { open: openDiff };

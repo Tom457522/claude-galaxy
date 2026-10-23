@@ -11,19 +11,14 @@
   <header class="topbar">
     <div class="brand">Claude Galaxy</div>
     <nav class="tabs">
-      <button class="tab active" data-tab="home">ホーム</button>
-      <button class="tab" data-tab="apps">アプリ</button>
-      <button class="tab" data-tab="term">ターミナル <span id="tab-badge" class="tab-badge"></span></button>
-      <button class="tab" data-tab="jobs">ジョブ <span id="tab-jobs-badge" class="tab-badge tab-badge-run"></span></button>
-      <button class="tab" data-tab="board">ボード <span id="tab-board-badge" class="tab-badge"></span></button>
-      <button class="tab" data-tab="audit">記録</button>
-      <button class="tab" data-tab="tools">ツール</button>
+      <button class="tab active" data-group="home">ホーム</button>
+      <button class="tab" data-group="apps">アプリ</button>
+      <button class="tab" data-group="work">作業 <span id="tab-badge" class="tab-badge" title="入力待ち・承認待ち"></span><span id="tab-jobs-badge" class="tab-badge tab-badge-run" title="実行中のジョブ"></span></button>
+      <button class="tab" data-group="board">ボード <span id="tab-board-badge" class="tab-badge" title="あなた宛ての未読"></span></button>
+      <button class="tab" data-group="admin">管理 <span id="tab-admin-badge" class="tab-badge" title="予算・診断の注意"></span></button>
     </nav>
     <button id="btn-new" class="btn primary">＋ 新規セッション</button>
-    <form id="cmd-form" class="cmd-form" title="やりたいことを書くと、どのフォルダで・どの方法で動かすかの案を作ります(Ctrl+K)">
-      <input id="cmd-input" type="text" placeholder="やりたいことを書く…(Ctrl+K)" autocomplete="off">
-      <button id="cmd-go" class="btn" type="submit">➤</button>
-    </form>
+    <button id="btn-palette" class="palette-btn" title="やりたいことの振り分け・画面の移動・操作(Ctrl+K)"><kbd>Ctrl K</kbd> やりたいこと・移動…</button>
     <div class="spacer"></div>
     <label id="layout-wrap" class="layout-label hidden">レイアウト
       <select id="layout">
@@ -45,9 +40,11 @@
       <div id="side-summary" class="side-summary"></div>
       <div id="side-inbox" class="side-inbox hidden"></div>
       <div id="side-list" class="side-list"></div>
+      <div id="side-jobs" class="side-jobs hidden"></div>
     </aside>
 
     <div class="content">
+      <nav id="subnav" class="subnav hidden"></nav>
       <!-- ホーム: フォルダ構造の 3D グラフ -->
       <section id="home" class="home">
         <div id="graph3d" class="graph3d"></div>
@@ -202,7 +199,6 @@
         <div class="board-col">
           <div class="board-head">
             <h3>MESSAGES</h3>
-            <label class="inbox-toggle" title="オンにすると、このアプリで起動する Claude(対話セッション・ジョブ)に共有バスの MCP サーバー(galaxy)を追加します。&#10;変更は次に起動するものから反映されます。"><input type="checkbox" id="bus-on"> 共有バスを使う</label>
             <button id="bm-clear" class="btn">すべて消す</button>
           </div>
           <div id="board-msgs" class="board-msgs"></div>
@@ -241,12 +237,7 @@
               <h2><span>☰</span> AUDIT LOG</h2>
               <p>エージェントが実行したツール・権限の判断・起動と終了の記録です(ファイルの中身は残しません)。保存先 <code>~/.claude-galaxy/audit/</code></p>
             </div>
-            <div class="jobs-tools">
-              <label class="inbox-toggle"><input type="checkbox" id="au-on"> 記録する</label>
-              <label class="layout-label">保存
-                <select id="au-keep"><option value="7">7 日</option><option value="30">30 日</option><option value="90">90 日</option><option value="365">365 日</option></select>
-              </label>
-            </div>
+            <div class="jobs-tools"><a href="#" class="go-settings">記録の設定 ›</a></div>
           </div>
           <div class="au-filters">
             <select id="au-days"><option value="1">今日</option><option value="2" selected>2 日</option><option value="7">7 日</option><option value="30">30 日</option></select>
@@ -254,6 +245,7 @@
               <option value="">すべて</option><option value="tool">ツール</option><option value="permission">権限</option>
               <option value="session-start">起動</option><option value="session-exit">終了</option>
               <option value="job-start">ジョブ開始</option><option value="job-end">ジョブ終了</option><option value="dispatch">窓口</option>
+              <option value="worktree-merge">取り込み</option><option value="worktree-push">push</option>
             </select>
             <input id="au-agent" type="text" placeholder="エージェント ID(s1 / j3)" autocomplete="off">
             <input id="au-q" type="text" placeholder="検索(ツール・ファイル・コマンド)" autocomplete="off">
@@ -289,17 +281,90 @@
             <div id="tl-claude" class="tl-list"></div>
             <div id="tl-ext" class="tl-ext"></div>
           </div>
-          <div class="apps-sec">
-            <div class="apps-lbl">SETTINGS</div>
-            <div class="tl-settings">
-              <label>worktree の置き場所(空なら ~/.claude-galaxy/worktrees)
-                <input id="tl-wtdir" type="text" autocomplete="off" spellcheck="false">
-              </label>
-              <label>窓口の振り分けに使うモデル
-                <input id="tl-dmodel" type="text" placeholder="haiku" autocomplete="off">
-              </label>
+          <p class="g-note"><a href="#" class="go-settings">worktree の置き場所・窓口のモデルは「設定」にあります ›</a></p>
+        </div>
+      </section>
+
+      <!-- 検索 -->
+      <section id="search" class="jobs hidden">
+        <div class="jobs-wrap">
+          <div class="apps-head"><div><h2><span>⌕</span> SEARCH</h2>
+            <p>セッションの画面出力・ジョブの経過と結果・メッセージ・共有メモリをまとめて探します。</p></div></div>
+          <form id="sr-form" class="au-filters">
+            <input id="sr-q" type="text" placeholder="探す語(空白区切りで、すべてを含むもの)" autocomplete="off">
+            <button class="btn primary" type="submit">検索</button>
+            <span id="sr-count" class="g-note"></span>
+          </form>
+          <div id="sr-list" class="sr-list"></div>
+        </div>
+      </section>
+
+      <!-- 設定 -->
+      <section id="settings" class="jobs hidden">
+        <div class="jobs-wrap set-wrap">
+          <div class="apps-head"><div><h2><span>⚙</span> SETTINGS</h2><p>設定はここにまとめています(保存先 <code>~/.claude-galaxy/settings.json</code>。テーマだけはこのブラウザに保存)。</p></div></div>
+
+          <div class="set-sec">
+            <h3>予算 <small id="st-spent"></small></h3>
+            <div id="st-bars" class="st-bars"></div>
+            <div class="set-grid">
+              <label>1 日の上限(USD・0 で上限なし)<input id="st-daily" type="number" min="0" step="0.5"><small>超えると新しいジョブを起動せず、待ちのまま止めます(対話セッションは止めません)</small></label>
+              <label>ジョブ 1 件の既定の上限(USD)<input id="st-job" type="number" min="0" step="0.1"><small>予算を指定しなかったジョブに --max-budget-usd を付けます</small></label>
+              <label>セッションの警告額(USD)<input id="st-sess" type="number" min="0" step="0.5"><small>超えたセッションのコストを赤く表示します</small></label>
             </div>
           </div>
+
+          <div class="set-sec">
+            <h3>通知と承認</h3>
+            <label class="g-chk"><input type="checkbox" id="st-notify"> デスクトップ通知(承認待ち・ジョブの完了・予算・あなた宛てのメッセージ)</label>
+            <div class="set-row"><button id="st-notify-perm" class="btn">ブラウザに通知を許可する</button><button id="st-notify-test" class="btn">通知を試す</button><span id="st-notify-state" class="g-note"></span></div>
+            <label class="g-chk"><input type="checkbox" id="st-inbox"> 権限確認を受信箱で答える(オフならターミナルのダイアログだけ)</label>
+          </div>
+
+          <div class="set-sec">
+            <h3>エージェント</h3>
+            <div class="set-grid">
+              <label>ジョブの同時実行数<select id="st-max"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>8</option><option>10</option></select></label>
+              <label>窓口の振り分けに使うモデル<input id="st-dmodel" type="text" placeholder="haiku" autocomplete="off"></label>
+              <label>worktree の置き場所(空なら ~/.claude-galaxy/worktrees)<input id="st-wtdir" type="text" autocomplete="off" spellcheck="false"></label>
+            </div>
+            <label class="g-chk"><input type="checkbox" id="st-bus"> 共有バス(MCP サーバー galaxy)を Claude に渡す(次に起動するものから)</label>
+          </div>
+
+          <div class="set-sec">
+            <h3>記録</h3>
+            <label class="g-chk"><input type="checkbox" id="st-audit"> 監査ログを残す</label>
+            <label class="set-inline">保存する日数 <select id="st-audit-days"><option value="7">7 日</option><option value="30">30 日</option><option value="90">90 日</option><option value="365">365 日</option></select></label>
+          </div>
+
+          <div class="set-sec">
+            <h3>表示</h3>
+            <label class="set-inline">テーマ
+              <select id="st-theme"><option value="auto">OS に合わせる</option><option value="dark">ダーク</option><option value="light">ライト</option></select>
+            </label>
+            <div class="set-row"><button id="st-guide" class="btn">はじめのガイドをもう一度見る</button></div>
+          </div>
+
+          <div class="set-sec">
+            <h3>バックアップ</h3>
+            <p class="g-note">設定・一覧・ジョブ・オートメーション・メッセージ・共有メモリ・MCP サーバーを 1 つのファイルにまとめます(画面出力のログと監査ログは含めません)。</p>
+            <div class="set-row">
+              <a id="st-backup" class="btn" href="/api/backup" download>バックアップをダウンロード</a>
+              <a id="st-backup-secrets" class="btn" href="/api/backup?secrets=1" download title="MCP サーバーの環境変数・ヘッダーの値も含めます。ファイルの扱いに注意してください">秘密の値も含める</a>
+              <label class="btn">ファイルから復元…<input id="st-restore" type="file" accept="application/json,.json" hidden></label>
+            </div>
+            <p id="st-restore-note" class="g-note"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 自己診断 -->
+      <section id="doctor" class="jobs hidden">
+        <div class="jobs-wrap">
+          <div class="apps-head"><div><h2><span>✚</span> DOCTOR</h2>
+            <p>このアプリが動くための前提(claude・node・hook・共有バス・git・保存先)を確かめます。うまく動かないときは、まずここを見てください。</p></div>
+            <button id="dr-run" class="btn primary">診断する</button></div>
+          <div id="dr-list" class="dr-list"><p class="jobs-empty">「診断する」を押すと始めます(数秒〜数十秒かかります)。</p></div>
         </div>
       </section>
 
@@ -328,6 +393,9 @@
       </label>
       <label class="g-chk" title="git リポジトリなら、別ブランチ(galaxy/<ID>)の作業コピーを作ってそこで起動します。ほかのセッションと同じファイルを触っても衝突しません"><input type="checkbox" id="f-worktree"> 別の worktree(ブランチ)で起動する</label>
       <div class="f-mcp-wrap"><span class="g-lbl">追加の MCP サーバー</span><div id="f-mcp" class="g-cats"></div></div>
+      <label>共有メモリから最初に渡す(任意・空白区切り。キーの先頭か語、tag:名前 でタグ)
+        <input id="f-memory" type="text" placeholder="例: proj/  tag:decision" autocomplete="off" spellcheck="false">
+      </label>
       <p id="dlg-error" class="error hidden"></p>
       <div class="dlg-actions">
         <button type="button" id="dlg-cancel" class="btn">キャンセル</button>
@@ -408,6 +476,11 @@
           <label class="app-type"><input type="radio" name="af-kind" value="cron" checked><b>⏱ 時刻</b><small>cron 式で決まった時刻に</small></label>
           <label class="app-type"><input type="radio" name="af-kind" value="files"><b>✎ ファイル変更</b><small>フォルダ内の変更をまとめて</small></label>
           <label class="app-type"><input type="radio" name="af-kind" value="git"><b>⑂ コミット</b><small>新しいコミットができたら</small></label>
+          <label class="app-type"><input type="radio" name="af-kind" value="after"><b>↪ ジョブのあと</b><small>別のオートメーションのジョブが終わったら</small></label>
+        </div>
+        <div id="af-after-wrap" class="app-row hidden">
+          <label>このオートメーションのジョブが終わったら <select id="af-after"></select></label>
+          <label>条件 <select id="af-after-status"><option value="done">完了したとき</option><option value="any">失敗も含めて終わったとき</option></select></label>
         </div>
         <div id="af-cron-wrap">
           <label>cron 式(分 時 日 月 曜日・ローカル時刻)
@@ -445,6 +518,9 @@
       </label>
       <label class="g-chk" title="git リポジトリなら、別ブランチ(galaxy/<ID>)の作業コピーで実行します。並行して動くほかの作業と衝突しません"><input type="checkbox" id="jf-worktree"> 別の worktree(ブランチ)で実行する</label>
       <div class="f-mcp-wrap"><span class="g-lbl">追加の MCP サーバー</span><div id="jf-mcp" class="g-cats"></div></div>
+      <label>共有メモリから最初に渡す(任意・空白区切り。キーの先頭か語、tag:名前 でタグ)
+        <input id="jf-memory" type="text" placeholder="例: proj/  tag:decision" autocomplete="off" spellcheck="false">
+      </label>
       <p id="jf-error" class="error hidden"></p>
       <div class="dlg-actions">
         <button type="button" id="jf-cancel" class="btn">キャンセル</button>
@@ -466,13 +542,22 @@
 
   <dialog id="dlg-diff" class="dlg-xwide">
     <div class="jd">
-      <div class="jd-head"><h2 id="df-title">差分</h2><button id="df-reload" class="icon-btn" title="読み直す">⟳</button><button id="df-close" class="icon-btn" title="閉じる">✕</button></div>
+      <div class="jd-head"><h2 id="df-title">差分</h2><label class="g-chk df-split-l"><input type="checkbox" id="df-split"> 左右に並べる</label><button id="df-reload" class="icon-btn" title="読み直す">⟳</button><button id="df-close" class="icon-btn" title="閉じる">✕</button></div>
       <div id="df-meta" class="job-meta jd-meta"></div>
       <div id="df-body" class="df-body"></div>
-      <div id="df-wt" class="dlg-actions hidden">
-        <span class="g-note">worktree を片付けても、ブランチとコミット済みの変更は残ります。</span>
-        <button id="df-rm" class="btn">worktree を削除</button>
-        <button id="df-rm-force" class="btn danger">変更ごと削除</button>
+      <div id="df-wt" class="df-wt hidden">
+        <div class="df-wt-row">
+          <input id="df-msg" type="text" placeholder="コミットメッセージ(空なら自動)" autocomplete="off">
+          <button id="df-commit" class="btn">コミット</button>
+          <button id="df-merge" class="btn primary" title="元のリポジトリで、いま開いているブランチに取り込みます">元のブランチに取り込む</button>
+          <label class="g-chk" title="worktree のコミットを 1 つにまとめて取り込みます"><input type="checkbox" id="df-squash"> まとめる</label>
+          <button id="df-push" class="btn" title="ブランチを origin に push して、PR を作る画面を開きます">push して PR を作る</button>
+        </div>
+        <div class="df-wt-row">
+          <span class="g-note">worktree を片付けても、ブランチとコミット済みの変更は残ります。</span>
+          <button id="df-rm" class="btn">worktree を削除</button>
+          <button id="df-rm-force" class="btn danger">変更ごと削除</button>
+        </div>
       </div>
     </div>
   </dialog>
@@ -535,6 +620,9 @@
       </div>
       <label class="g-chk"><input type="checkbox" id="dp-worktree"> 別の worktree(ブランチ)で動かす</label>
       <div class="f-mcp-wrap"><span class="g-lbl">追加の MCP サーバー</span><div id="dp-mcp" class="g-cats"></div></div>
+      <label>共有メモリから最初に渡す(任意・空白区切り。キーの先頭か語、tag:名前 でタグ)
+        <input id="dp-memory" type="text" placeholder="例: proj/  tag:decision" autocomplete="off" spellcheck="false">
+      </label>
       <p id="dp-error" class="error hidden"></p>
       <div class="dlg-actions">
         <button type="button" id="dp-reroute" class="btn" title="Claude にもう一度振り分けさせる">振り分け直す</button>
@@ -545,10 +633,31 @@
     </form>
   </dialog>
 
+  <dialog id="dlg-palette" class="dlg-palette">
+    <input id="pl-input" type="text" placeholder="やりたいことを書く / 画面・セッション・操作を探す" autocomplete="off" spellcheck="false">
+    <div id="pl-list" class="pl-list" role="listbox"></div>
+    <div class="pl-foot"><kbd>↑↓</kbd> 選ぶ <kbd>Enter</kbd> 実行 <kbd>Esc</kbd> 閉じる ・ 当てはまるものがなければ、窓口で振り分けます</div>
+  </dialog>
+
+  <dialog id="dlg-guide" class="dlg-wide">
+    <div class="guide">
+      <h2>Claude Galaxy へようこそ</h2>
+      <p class="g-note">複数の Claude Code を並べて動かし、承認・ジョブ・記録を 1 か所で扱うアプリです。まずは次の 3 つを試してください。</p>
+      <ol class="guide-steps">
+        <li><b>プロジェクトのフォルダを登録する</b><span>ホームの 3D グラフと、窓口の振り分け先の候補になります。</span><button class="btn" data-guide="roots">フォルダを登録</button></li>
+        <li><b>最初のセッションを起動する</b><span>作業ディレクトリを選んで Claude Code を起動します。</span><button class="btn" data-guide="session">新規セッション</button></li>
+        <li><b>診断で前提を確かめる</b><span>claude・hook・共有バスが動くかを確かめます。権限確認は左上の「承認待ち」に出ます。</span><button class="btn" data-guide="doctor">診断する</button></li>
+      </ol>
+      <p class="g-note">どこからでも <kbd>Ctrl K</kbd> で、やりたいことを書いたり、画面やセッションに移動したりできます。</p>
+      <div class="dlg-actions"><button class="btn primary" data-guide="close">はじめる</button></div>
+    </div>
+  </dialog>
+
   <script src="/vendor/xterm/lib/xterm.js"></script>
   <script src="/vendor/addon-fit/lib/addon-fit.js"></script>
   <script src="/vendor/addon-web-links/lib/addon-web-links.js"></script>
   <script src="/vendor/graph3d.bundle.js"></script>
+  <script src="/ui.js"></script>
   <script src="/graph-view.js"></script>
   <script src="/apps-view.js"></script>
   <script src="/jobs-view.js"></script>
@@ -556,6 +665,8 @@
   <script src="/audit-view.js"></script>
   <script src="/tools-view.js"></script>
   <script src="/dispatch-view.js"></script>
+  <script src="/settings-view.js"></script>
+  <script src="/palette-view.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

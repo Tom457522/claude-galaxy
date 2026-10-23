@@ -144,20 +144,45 @@ function mascotImageURL(status) {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-// ---------- タブ ----------
-const TABS = ['home', 'apps', 'term', 'jobs', 'board', 'audit', 'tools'];
-let curTab = TABS.includes(localStorage.getItem('tab')) ? localStorage.getItem('tab') : 'home';
+// ---------- タブ(グループと、その中のサブタブ)----------
+const GROUPS = {
+  home: ['home'],
+  apps: ['apps'],
+  work: ['term', 'jobs'],
+  board: ['board'],
+  admin: ['audit', 'search', 'tools', 'settings', 'doctor'],
+};
+const SUB_LABEL = {
+  term: 'ターミナル', jobs: 'ジョブ', audit: '記録', search: '検索', tools: 'ツール', settings: '設定', doctor: '診断',
+};
+const TABS = Object.values(GROUPS).flat();
+const SECTIONS = ['home', 'apps', 'jobs', 'board', 'audit', 'search', 'tools', 'settings', 'doctor']; // term はグリッド(relayout が出し分け)
+const groupOf = (tab) => Object.keys(GROUPS).find((g) => GROUPS[g].includes(tab)) || 'home';
+const lsGet = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch (_) { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (_) { /* ignore */ } };
+let curTab = TABS.includes(lsGet('tab')) ? lsGet('tab') : 'home';
+const lastSub = (() => { try { return JSON.parse(lsGet('lastSub', '{}')) || {}; } catch (_) { return {}; } })();
+
+function renderSubnav(group) {
+  const subs = GROUPS[group];
+  const nav = $('#subnav');
+  nav.classList.toggle('hidden', subs.length < 2);
+  if (subs.length < 2) return;
+  nav.innerHTML = subs.map((t) => `<button class="subtab${t === curTab ? ' active' : ''}" data-tab="${t}">${SUB_LABEL[t]}` +
+    `<span class="tab-badge" id="sub-badge-${t}"></span></button>`).join('');
+  refreshBadges();
+}
 
 function setTab(tab) {
+  if (!TABS.includes(tab)) tab = 'home';
   curTab = tab;
-  try { localStorage.setItem('tab', tab); } catch (_) { /* ignore */ }
-  for (const b of document.querySelectorAll('.tab')) b.classList.toggle('active', b.dataset.tab === tab);
-  $('#home').classList.toggle('hidden', tab !== 'home');
-  $('#apps').classList.toggle('hidden', tab !== 'apps');
-  $('#jobs').classList.toggle('hidden', tab !== 'jobs');
-  $('#board').classList.toggle('hidden', tab !== 'board');
-  $('#audit').classList.toggle('hidden', tab !== 'audit');
-  $('#tools').classList.toggle('hidden', tab !== 'tools');
+  const group = groupOf(tab);
+  lastSub[group] = tab;
+  lsSet('tab', tab);
+  lsSet('lastSub', JSON.stringify(lastSub));
+  for (const b of document.querySelectorAll('.tab')) b.classList.toggle('active', b.dataset.group === group);
+  renderSubnav(group);
+  for (const id of SECTIONS) $(`#${id}`).classList.toggle('hidden', tab !== id);
   if (tab === 'audit') window.AuditView.show(); else window.AuditView.hide();
   if (tab === 'tools') window.ToolsView.show();
   $('#layout-wrap').classList.toggle('hidden', tab !== 'term');
@@ -167,8 +192,30 @@ function setTab(tab) {
 }
 document.querySelector('.tabs').addEventListener('click', (e) => {
   const b = e.target.closest('.tab');
+  if (b) setTab(lastSub[b.dataset.group] || GROUPS[b.dataset.group][0]);
+});
+$('#subnav').addEventListener('click', (e) => {
+  const b = e.target.closest('.subtab');
   if (b) setTab(b.dataset.tab);
 });
+
+// バッジ: 作業(入力待ち・承認待ち + 実行中のジョブ)/ ボード(あなた宛ての未読)/ 管理(予算・診断の注意)
+const badges = { waiting: 0, jobs: 0, board: 0, admin: 0 };
+function setCount(el, n, title) {
+  if (!el) return;
+  el.textContent = n || '';
+  el.classList.toggle('on', n > 0);
+  if (title) el.title = title;
+}
+function refreshBadges() {
+  setCount($('#tab-badge'), badges.waiting);
+  setCount($('#tab-jobs-badge'), badges.jobs);
+  setCount($('#tab-board-badge'), badges.board);
+  setCount($('#tab-admin-badge'), badges.admin ? '!' : 0);
+  setCount($('#sub-badge-term'), badges.waiting);
+  setCount($('#sub-badge-jobs'), badges.jobs);
+  setCount($('#sub-badge-settings'), badges.admin ? '!' : 0);
+}
 
 function syncGraphSessions() {
   if (!window.GraphView) return;
@@ -203,7 +250,7 @@ class Pane {
     this.el = document.createElement('section');
     this.el.className = 'pane';
     this.el.innerHTML = `
-      <div class="pane-head">
+      <div class="pane-head" draggable="true" title="ドラッグで並べ替え">
         <span class="pane-mascot"></span>
         <span class="pane-title"></span>
         <span class="pane-state"></span>
@@ -262,6 +309,28 @@ class Pane {
     this.el.querySelector('.diff').addEventListener('click', () => window.DiffView.open(this.id));
     this.el.querySelector('.close').addEventListener('click', () => closeSession(this.id));
     this.titleEl.addEventListener('dblclick', () => this.startRename());
+    // 見出しをドラッグしてペインを並べ替える(順番はブラウザに保存)
+    const head = this.el.querySelector('.pane-head');
+    head.addEventListener('dragstart', (e) => {
+      if (e.target.closest('button, input')) { e.preventDefault(); return; }
+      e.dataTransfer.setData('text/x-galaxy-pane', this.id);
+      e.dataTransfer.effectAllowed = 'move';
+      this.el.classList.add('dragging');
+    });
+    head.addEventListener('dragend', () => this.el.classList.remove('dragging'));
+    this.el.addEventListener('dragover', (e) => {
+      if (!e.dataTransfer.types.includes('text/x-galaxy-pane')) return;
+      e.preventDefault();
+      this.el.classList.add('drop-target');
+    });
+    this.el.addEventListener('dragleave', () => this.el.classList.remove('drop-target'));
+    this.el.addEventListener('drop', (e) => {
+      this.el.classList.remove('drop-target');
+      const from = e.dataTransfer.getData('text/x-galaxy-pane');
+      if (!from || from === this.id) return;
+      e.preventDefault();
+      movePane(from, this.id);
+    });
 
     this.updateHead();
     grid.appendChild(this.el);
@@ -301,6 +370,7 @@ class Pane {
     }
     const u = this.info.usage;
     this.usageEl.textContent = usageTokens(u) ? fmtCost(u.cost) : '';
+    this.usageEl.classList.toggle('warn', !!this.info.costWarn);
     this.usageEl.title = usageTip(u);
     this.el.classList.toggle('dead', !this.info.alive);
     if (this.stClass !== `st-${st}`) {
@@ -371,7 +441,7 @@ class Pane {
         this.setInfo(info);
         setFocus(this.id);
       } catch (err) {
-        alert(err.message);
+        UI.toast(err.message, { type: 'error' });
         btn.disabled = false;
       }
     });
@@ -553,10 +623,21 @@ function permCard(x, { withSession }) {
     '</div></div>';
 }
 
+// 同じ種類の確認(ツール + 提案ルール)をまとめて許可できるようにする
+const permKind = (x) => `${x.tool}|${(x.rules && x.rules[0] && x.rules[0].rule) || ''}`;
+let permSel = 0; // キーボードで選んでいる確認
+
 function renderInbox() {
   const list = [...perms.values()].sort((a, b) => a.at - b.at);
+  permSel = Math.min(permSel, Math.max(0, list.length - 1));
+  const groups = new Map();
+  for (const x of list) { const k = permKind(x); groups.set(k, (groups.get(k) || []).concat(x)); }
+  const batch = [...groups.entries()].filter(([, xs]) => xs.length > 1)
+    .map(([k, xs]) => `<button class="btn inbox-batch" data-batch="${esc(k)}" title="同じ種類の確認 ${xs.length} 件を、すべて今回だけ許可します">${esc(xs[0].tool)} をまとめて許可(${xs.length})</button>`).join('');
   inboxEl.innerHTML = list.length
-    ? `<div class="inbox-title">承認待ち <b>${list.length}</b></div>${list.map((x) => permCard(x, { withSession: true })).join('')}`
+    ? `<div class="inbox-title">承認待ち <b>${list.length}</b><span class="inbox-keys" title="入力欄・ターミナルの外で使えます">A 許可 / D 拒否 / J K 選択</span></div>` +
+      (batch ? `<div class="inbox-batches">${batch}</div>` : '') +
+      list.map((x, i) => permCard(x, { withSession: true }).replace('class="perm"', `class="perm${i === permSel ? ' sel' : ''}"`)).join('')
     : '';
   inboxEl.classList.toggle('hidden', !list.length);
   for (const p of panes.values()) {
@@ -600,8 +681,37 @@ document.addEventListener('click', async (e) => {
   if (x && act === 'ask') { if (curTab !== 'term') setTab('term'); setFocus(x.sessionId); }
 });
 
+// まとめて許可
+inboxEl.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-batch]');
+  if (!b) return;
+  const xs = [...perms.values()].filter((x) => permKind(x) === b.dataset.batch);
+  b.disabled = true;
+  await Promise.all(xs.map((x) => api('POST', `/api/permissions/${x.id}`, { behavior: 'allow' }).catch(() => {})));
+  for (const x of xs) perms.delete(x.id);
+  renderInbox();
+  UI.toast(`${xs.length} 件を許可しました`);
+});
+
+// キーボードで答える(入力欄・ターミナル・ダイアログの外で): A 許可 / D 拒否 / J・K(↑↓)で選ぶ
+window.addEventListener('keydown', async (e) => {
+  if (!perms.size || e.ctrlKey || e.metaKey || e.altKey || UI.typing(e)) return;
+  const list = [...perms.values()].sort((a, b) => a.at - b.at);
+  const k = e.key.toLowerCase();
+  if (k === 'j' || e.key === 'ArrowDown') { permSel = Math.min(permSel + 1, list.length - 1); renderInbox(); e.preventDefault(); return; }
+  if (k === 'k' || e.key === 'ArrowUp') { permSel = Math.max(permSel - 1, 0); renderInbox(); e.preventDefault(); return; }
+  if (k !== 'a' && k !== 'd') return;
+  const x = list[permSel];
+  if (!x) return;
+  e.preventDefault();
+  try { await api('POST', `/api/permissions/${x.id}`, { behavior: k === 'a' ? 'allow' : 'deny' }); } catch (_) { /* もう終わっている */ }
+  perms.delete(x.id);
+  renderInbox();
+  UI.toast(`${x.tool} を${k === 'a' ? '許可' : '拒否'}しました`);
+});
+
 inboxToggle.addEventListener('change', async () => {
-  try { await api('PUT', '/api/settings', { permissionInbox: inboxToggle.checked }); } catch (e) { alert(e.message); }
+  try { await api('PUT', '/api/settings', { permissionInbox: inboxToggle.checked }); } catch (e) { UI.toast(e.message, { type: 'error' }); }
 });
 
 async function resyncPermissions() {
@@ -623,6 +733,37 @@ function setFocus(id) {
     p.el.classList.remove('unread');
     p.term.focus();
   }
+}
+
+// ペインの並べ替え(from を to の位置へ)。順番は保存して、次に開いたときも同じ並びにする
+function movePane(from, to) {
+  const a = panes.get(from);
+  const b = panes.get(to);
+  if (!a || !b) return;
+  const els = [...grid.children];
+  if (els.indexOf(a.el) < els.indexOf(b.el)) b.el.after(a.el); else b.el.before(a.el);
+  const order = [...grid.querySelectorAll('.pane')].map((el) => [...panes.values()].find((p) => p.el === el)?.id).filter(Boolean);
+  lsSet('paneOrder', JSON.stringify(order));
+  // Alt+数字の順番も見た目に合わせる
+  const sorted = new Map(order.map((id) => [id, panes.get(id)]));
+  for (const [id, p] of panes) if (!sorted.has(id)) sorted.set(id, p);
+  panes.clear();
+  for (const [id, p] of sorted) panes.set(id, p);
+  relayout();
+}
+
+// 保存してある順番でペインを並べ直す(読み込み時)
+function applyPaneOrder() {
+  let order = [];
+  try { order = JSON.parse(lsGet('paneOrder', '[]')) || []; } catch (_) { order = []; }
+  const known = order.filter((id) => panes.has(id));
+  if (!known.length) return;
+  const rest = [...panes.keys()].filter((id) => !known.includes(id));
+  const all = [...known, ...rest];
+  for (const id of all) grid.appendChild(panes.get(id).el);
+  const entries = all.map((id) => [id, panes.get(id)]);
+  panes.clear();
+  for (const [id, p] of entries) panes.set(id, p);
 }
 
 function toggleMax(id) {
@@ -649,13 +790,29 @@ function relayout() {
 }
 
 let jobCounts = { running: 0, queued: 0 };
-sideSummary.addEventListener('click', (e) => { if (e.target.closest('.sum-jobs')) setTab('jobs'); });
 
-function setBadge(sel, n) {
-  const b = $(sel);
-  b.textContent = n || '';
-  b.classList.toggle('on', n > 0);
+// サイドバーのジョブ一覧(実行中・待ちと、10 分以内に終わったもの 3 件まで)
+const JOB_IC = { queued: '◷', running: '◐', done: '✓', failed: '✕', canceled: '■' };
+function renderSideJobs(jobs) {
+  const el = $('#side-jobs');
+  const active = jobs.filter((j) => j.status === 'running' || j.status === 'queued').sort((a, b) => a.createdAt - b.createdAt);
+  const recent = jobs.filter((j) => !active.includes(j) && j.endedAt && Date.now() - j.endedAt < 600000)
+    .sort((a, b) => b.endedAt - a.endedAt).slice(0, 3);
+  const list = [...active, ...recent];
+  el.classList.toggle('hidden', !list.length);
+  el.innerHTML = list.length ? `<div class="side-sec-title">ジョブ</div>${list.map((j) => `<div class="sjob js-${esc(j.status)}" data-job="${esc(j.id)}" title="${esc(j.prompt.slice(0, 300))}">` +
+    `<span class="sjob-ic">${JOB_IC[j.status] || '·'}</span><span class="sjob-name">${esc(j.name)}</span>` +
+    `<span class="sjob-meta">${j.status === 'running' ? esc(j.lastTool || '') : j.status === 'queued' ? (j.blockedBy ? '予算で停止' : '待ち') : (j.costUsd ? fmtCost(j.costUsd) : '')}</span></div>`).join('')}` : '';
 }
+$('#side-jobs').addEventListener('click', (e) => {
+  const r = e.target.closest('[data-job]');
+  if (r) { setTab('jobs'); window.JobsView.openDetail(r.dataset.job); }
+});
+sideSummary.addEventListener('click', (e) => {
+  if (e.target.closest('.sum-jobs')) setTab('jobs');
+  if (e.target.closest('.sum-budget')) setTab('settings');
+});
+
 
 function renderSummary() {
   const infos = [...panes.values()].map((p) => p.info);
@@ -670,15 +827,19 @@ function renderSummary() {
     `<span class="sum-wait">入力待ち <b>${waiting}</b></span>` +
     `<span>サブエージェント <b>${agents}</b></span>` +
     (jobCounts.running + jobCounts.queued ? `<span class="sum-jobs" title="ジョブタブを開く">ジョブ <b>${jobCounts.running}</b>${jobCounts.queued ? ` +待ち ${jobCounts.queued}` : ''}</span>` : '') +
-    (tokens ? `<span title="保存されているセッションの合計(概算)">コスト <b>${fmtCost(cost)}</b> · ${fmtTok(tokens)} tok</span>` : '');
+    (tokens ? `<span title="保存されているセッションの合計(概算)">コスト <b>${fmtCost(cost)}</b> · ${fmtTok(tokens)} tok</span>` : '') +
+    (() => {
+      const b = window.SettingsView && window.SettingsView.budget();
+      if (!b || (!b.spent && !b.limit)) return '';
+      return `<span class="sum-budget${b.over ? ' over' : b.warn ? ' warn' : ''}" title="今日の使用額(概算)。クリックで設定">今日 <b>${fmtCost(b.spent)}</b>${b.limit ? ` / ${fmtCost(b.limit)}` : ''}</span>`;
+    })();
   if (!infos.length && !sideList.querySelector('.srow')) {
     sideList.innerHTML = '<p class="side-empty">セッションなし</p>';
   }
   document.title = perms.size ? `(${perms.size}) 承認待ち — ${TITLE}`
     : waiting ? `(${waiting}) 入力待ち — ${TITLE}` : TITLE;
-  const badge = $('#tab-badge');
-  badge.textContent = waiting || '';
-  badge.classList.toggle('on', waiting > 0);
+  badges.waiting = waiting;
+  refreshBadges();
   syncGraphSessions();
 }
 
@@ -717,8 +878,8 @@ function removePane(id) {
   renderSummary();
 }
 
-async function addSession({ name, cwd, command, appId, worktree, mcpServers }) {
-  const info = await api('POST', '/api/sessions', { name, cwd, command, appId, worktree, mcpServers });
+async function addSession({ name, cwd, command, appId, worktree, mcpServers, memory }) {
+  const info = await api('POST', '/api/sessions', { name, cwd, command, appId, worktree, mcpServers, memory });
   if (!panes.has(info.id)) onSession(info); // SSE より先に応答が届いた場合に備える
   setFocus(info.id);
   return panes.get(info.id);
@@ -727,9 +888,9 @@ async function addSession({ name, cwd, command, appId, worktree, mcpServers }) {
 async function closeSession(id, { silent = false } = {}) {
   const p = panes.get(id);
   if (!p) return;
-  if (!silent && p.info.alive && !confirm(`「${p.info.name}」を終了しますか?\n実行中のプロセスは停止されます。`)) return;
+  if (!silent && p.info.alive && !await UI.confirm(`「${p.info.name}」を終了しますか?\n実行中のプロセスは停止されます。`)) return;
   if (!silent && !p.info.alive && p.info.resumable &&
-      !confirm(`「${p.info.name}」を一覧から削除しますか?\nこのアプリからは再開できなくなります(Claude 側の会話履歴は残り、claude --resume で開けます)。`)) return;
+      !await UI.confirm(`「${p.info.name}」を一覧から削除しますか?\nこのアプリからは再開できなくなります(Claude 側の会話履歴は残り、claude --resume で開けます)。`)) return;
   try { await api('DELETE', `/api/sessions/${id}`); } catch (_) { /* ignore */ }
   removePane(id);
 }
@@ -751,6 +912,7 @@ async function openDialog(prefill = {}) {
   $('#f-cmd').value = prefill.command || (app && app.command) || localStorage.getItem('lastCmd') || defaults.command || 'claude';
   $('#dlg-error').classList.add('hidden');
   $('#f-worktree').checked = false;
+  $('#f-memory').value = '';
   $('#f-mcp').innerHTML = window.ToolsView.pickerHtml(null);
   dlg.showModal();
   (hasCwd || prefill.appId ? $('#f-cwd') : $('#f-name')).focus();
@@ -778,7 +940,7 @@ async function launchCommandApp(a) {
     await addSession({ name: a.name, cwd: a.cwd, command: a.command, appId: a.id });
     setTab('term');
   } catch (e) {
-    alert(e.message);
+    UI.toast(e.message, { type: 'error' });
   }
 }
 
@@ -790,7 +952,7 @@ $('#dlg-form').addEventListener('submit', async (e) => {
   try {
     await addSession({
       name: $('#f-name').value.trim(), cwd, command, appId,
-      worktree: $('#f-worktree').checked, mcpServers: window.ToolsView.pickerValue($('#f-mcp')),
+      worktree: $('#f-worktree').checked, mcpServers: window.ToolsView.pickerValue($('#f-mcp')), memory: $('#f-memory').value.trim(),
     });
     localStorage.setItem('lastApp', appId || '');
     localStorage.setItem('lastCwd', cwd);
@@ -859,23 +1021,80 @@ function connectEvents() {
   const es = new EventSource('/api/events');
   es.addEventListener('session', (e) => onSession(JSON.parse(e.data)));
   es.addEventListener('removed', (e) => removePane(JSON.parse(e.data).id));
-  es.addEventListener('permission', (e) => { const x = JSON.parse(e.data); perms.set(x.id, x); renderInbox(); });
+  es.addEventListener('permission', (e) => {
+    const x = JSON.parse(e.data);
+    const isNew = !perms.has(x.id);
+    perms.set(x.id, x);
+    renderInbox();
+    if (isNew) {
+      UI.notify(`承認待ち: ${x.agentName || x.sessionId}`, `${x.tool}  ${(x.input && (x.input.command || x.input.file_path || x.input.url)) || ''}`.slice(0, 200), {
+        tag: `perm-${x.id}`, onClick: () => { if (panes.has(x.sessionId)) { setTab('term'); setFocus(x.sessionId); } else setTab('jobs'); },
+      });
+    }
+  });
+  es.addEventListener('budget', (e) => {
+    const b = JSON.parse(e.data);
+    window.SettingsView.onBudget(b);
+    badges.admin = b.over || b.warn ? 1 : 0;
+    refreshBadges();
+    renderSummary();
+    if (b.level) {
+      const msg = b.level === 'over'
+        ? `今日の予算 $${b.limit.toFixed(2)} に達しました。新しいジョブの起動を止めています`
+        : `今日の予算の 8 割に達しました($${b.spent.toFixed(2)} / $${b.limit.toFixed(2)})`;
+      UI.toast(msg, { type: b.level === 'over' ? 'error' : 'warn', timeout: 10000, action: { label: '設定', fn: () => setTab('settings') } });
+      UI.notify('Claude Galaxy: 予算', msg, { tag: 'budget', onClick: () => setTab('settings') });
+    }
+  });
   es.addEventListener('permission-removed', (e) => { if (perms.delete(JSON.parse(e.data).id)) renderInbox(); });
   es.addEventListener('settings', (e) => {
     const st = JSON.parse(e.data);
     inboxToggle.checked = !!st.permissionInbox;
     window.JobsView.onSettings(st);
     window.BoardView.onSettings(st);
-    window.AuditView.onSettings(st);
-    window.ToolsView.onSettings(st);
+    window.SettingsView.onSettings(st);
   });
-  es.addEventListener('job', (e) => window.JobsView.onJob(JSON.parse(e.data)));
+  es.addEventListener('job', (e) => {
+    const j = JSON.parse(e.data);
+    const prev = window.JobsView.get(j.id);
+    window.JobsView.onJob(j);
+    if (prev && prev.status === 'running' && (j.status === 'done' || j.status === 'failed')) {
+      UI.notify(`ジョブ${j.status === 'done' ? 'が完了' : 'が失敗'}: ${j.name}`, (j.error || j.result || '').slice(0, 200), {
+        tag: `job-${j.id}`, onClick: () => { setTab('jobs'); window.JobsView.openDetail(j.id); },
+      });
+    }
+  });
   es.addEventListener('job-removed', (e) => window.JobsView.onJobRemoved(JSON.parse(e.data).id));
   es.addEventListener('automation', (e) => window.JobsView.onAutomation(JSON.parse(e.data)));
   es.addEventListener('automation-removed', (e) => window.JobsView.onAutomationRemoved(JSON.parse(e.data).id));
   es.addEventListener('board', (e) => window.BoardView.onChange(JSON.parse(e.data)));
   es.addEventListener('audit', () => window.AuditView.onEntry());
   es.onopen = () => { resync(); resyncPermissions(); window.JobsView.resync(); window.BoardView.resync(); }; // 切断→再接続時に取りこぼしを補う
+}
+
+// ---------- コマンドパレットの候補 ----------
+function paletteItems() {
+  const items = [];
+  const add = (group, icon, label, run, hint = '') => items.push({ group, icon, label, run, hint });
+  for (const t of TABS) add('画面', '›', t === 'home' ? 'ホーム' : t === 'apps' ? 'アプリ' : t === 'board' ? 'ボード' : SUB_LABEL[t], () => setTab(t), groupOf(t) === 'admin' ? '管理' : groupOf(t) === 'work' ? '作業' : '');
+  add('操作', '＋', '新規セッション', () => openDialog());
+  add('操作', '◷', 'ジョブを追加', () => { setTab('jobs'); window.JobsView.newJob(); });
+  add('操作', '⚙', 'オートメーションを追加', () => { setTab('jobs'); window.JobsView.newAutomation(); });
+  add('操作', '✚', '診断する', () => { setTab('doctor'); window.SettingsView.runDoctor(); });
+  add('操作', '⌕', '検索…', () => { setTab('search'); $('#sr-q').focus(); }, 'セッション・ジョブ・メッセージ・共有メモリ');
+  add('操作', '◐', `テーマ: ${document.documentElement.dataset.theme === 'dark' ? 'ライトにする' : 'ダークにする'}`,
+    () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; UI.setTheme(next); const sel = $('#st-theme'); if (sel) sel.value = next; });
+  add('操作', '⚑', `受信箱で承認: ${inboxToggle.checked ? 'オフにする' : 'オンにする'}`, () => { inboxToggle.checked = !inboxToggle.checked; inboxToggle.dispatchEvent(new Event('change')); });
+  add('操作', '↓', 'バックアップをダウンロード', () => { location.href = '/api/backup'; });
+  add('操作', '?', 'はじめのガイド', () => window.SettingsView.openGuide());
+  for (const p of panes.values()) {
+    add('セッション', '▣', p.info.name, () => { setTab('term'); setFocus(p.id); }, `${p.id} · ${STATUS_LABEL[normStatus(p.info.status)]} · ${p.info.cwd}`);
+  }
+  for (const j of window.JobsView.list().sort((a, b) => b.createdAt - a.createdAt).slice(0, 30)) {
+    add('ジョブ', '◷', j.name, () => { setTab('jobs'); window.JobsView.openDetail(j.id); }, `${j.id} · ${j.status}`);
+  }
+  for (const a of (window.AppsView.commandApps ? window.AppsView.commandApps() : [])) add('アプリ', a.icon || '›_', `${a.name} を起動`, () => launchCommandApp(a), a.command);
+  return items;
 }
 
 // ---------- 起動 ----------
@@ -893,24 +1112,43 @@ function connectEvents() {
   });
   await window.JobsView.init({
     agentName: (id) => panes.get(id)?.info.name || window.JobsView.get(id)?.name || '',
-    onCounts: (c) => { jobCounts = c; setBadge('#tab-jobs-badge', c.running); renderSummary(); },
+    onCounts: (c) => { jobCounts = c; badges.jobs = c.running; refreshBadges(); renderSideJobs(c.jobs || []); renderSummary(); },
     onOpenSession: (info) => { onSession(info); setTab('term'); setFocus(info.id); },
   });
-  await window.BoardView.init({ onUnread: (n) => setBadge('#tab-board-badge', n) });
+  await window.BoardView.init({
+    onUnread: (n) => {
+      if (n > badges.board) UI.notify('Claude Galaxy: あなた宛てのメッセージ', `未読 ${n} 件`, { tag: 'board', onClick: () => setTab('board') });
+      badges.board = n;
+      refreshBadges();
+    },
+  });
   window.AuditView.init();
   await window.ToolsView.init();
   window.DispatchView.init({
     onSession: (info) => { onSession(info); setTab('term'); setFocus(info.id); },
     onJob: (j) => { window.JobsView.onJob(j); setTab('jobs'); },
   });
+  await window.SettingsView.init({
+    go: (tab) => setTab(tab),
+    openRoots: () => { setTab('home'); window.GraphView.openRoots(); },
+    newSession: () => openDialog(),
+    onDoctor: (d) => { badges.admin = d.ok ? 0 : 1; refreshBadges(); },
+    openHit: (kind, id) => {
+      if (kind === 'session' && panes.has(id)) { setTab('term'); setFocus(id); }
+      else if (kind === 'job') { setTab('jobs'); window.JobsView.openDetail(id); }
+      else if (kind === 'memory') { setTab('board'); window.BoardView.searchMemory(id); }
+      else setTab('board');
+    },
+  });
+  window.PaletteView.init({ items: paletteItems, dispatch: (text) => window.DispatchView.plan(text) });
   await resync();
   api('GET', '/api/settings').then((st) => {
     inboxToggle.checked = !!st.permissionInbox;
     window.JobsView.onSettings(st);
     window.BoardView.onSettings(st);
-    window.AuditView.onSettings(st);
-    window.ToolsView.onSettings(st);
+    window.SettingsView.onSettings(st);
   }).catch(() => {});
+  applyPaneOrder();
   const first = [...panes.keys()][0];
   if (first && !focusedId) setFocus(first);
   setTab(curTab);

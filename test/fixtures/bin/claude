@@ -4,8 +4,9 @@
 //   claude -p --output-format stream-json ... : 標準入力のプロンプトを読み、stream-json を出す
 //     プロンプト中の「CALL <tool> <json>」行は、--mcp-config の galaxy MCP サーバーを実際に呼ぶ
 //     「PERM」を含むと PermissionRequest hook を呼び、「SLEEP」を含むと 30 秒待つ
+//     「ARGS」を含むと、受け取った引数と共有メモリのファイルの中身を結果に入れる
 //   claude -p --output-format json ... : ディスパッチャー用。候補フォルダの先頭を選んだ案を返す
-//   claude mcp list : 固定の一覧を出す
+//   claude mcp list : 固定の一覧を出す / claude --version : 固定の版を出す
 //   それ以外(対話起動): 引数を表示して入力を待つ
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
@@ -13,6 +14,11 @@ const path = require('path');
 
 const args = process.argv.slice(2);
 const out = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
+
+if (args.includes('--version')) {
+  console.log('9.9.9 (Fake Claude Code)');
+  process.exit(0);
+}
 
 if (args[0] === 'mcp' && args[1] === 'list') {
   console.log('fake-server: npx fake-mcp - ✓ Connected');
@@ -76,6 +82,11 @@ process.stdin.on('end', async () => {
   if (prompt.includes('EDIT')) {
     fs.writeFileSync(path.join(process.cwd(), 'edited-by-job.txt'), 'hello\n');
     out({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Write', input: { file_path: path.join(process.cwd(), 'edited-by-job.txt') } }] } });
+  }
+  if (prompt.includes('ARGS')) {
+    // 受け取った引数と、--append-system-prompt-file の中身を結果に入れる(テストで確かめるため)
+    const k = args.indexOf('--append-system-prompt-file');
+    results.push({ args, memory: k >= 0 ? fs.readFileSync(args[k + 1], 'utf8') : null });
   }
   if (prompt.includes('PERM')) {
     const r = spawnSync('node', [path.join(__dirname, '..', '..', '..', 'hook.js'), 'PermissionRequest'], {

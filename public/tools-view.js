@@ -132,7 +132,7 @@
     try {
       const s = await api('POST', `/api/tools/servers/${id}/check`);
       S.servers = S.servers.map((x) => (x.id === id ? s : x));
-    } catch (e) { alert(e.message); }
+    } catch (e) { UI.toast(e.message, { type: 'error' }); }
     S.checking.delete(id);
     render();
   }
@@ -145,11 +145,11 @@
       else if (act === 'edit') openForm(s);
       else if (act === 'default') { await api('PUT', `/api/tools/servers/${id}`, { defaultOn: el.checked }); load(); }
       else if (act === 'remove') {
-        if (!confirm(`「${s.name}」を削除しますか?`)) return;
+        if (!await UI.confirm(`「${s.name}」を削除しますか?`)) return;
         await api('DELETE', `/api/tools/servers/${id}`);
         load();
       }
-    } catch (e) { alert(e.message); }
+    } catch (e) { UI.toast(e.message, { type: 'error' }); }
   }
 
   function bind() {
@@ -177,12 +177,6 @@
         outEl.textContent = `$ claude mcp list   (${r.cwd})\n${r.output || '(出力なし)'}`;
       } catch (e) { outEl.textContent = e.message; }
     });
-    $('#tl-wtdir').addEventListener('change', async (e) => {
-      try { await api('PUT', '/api/settings', { worktreeDir: e.target.value }); } catch (err) { alert(err.message); }
-    });
-    $('#tl-dmodel').addEventListener('change', async (e) => {
-      try { await api('PUT', '/api/settings', { dispatchModel: e.target.value }); } catch (err) { alert(err.message); }
-    });
   }
 
   // セッション / ジョブのダイアログに置く「使う MCP サーバー」のチェックボックス
@@ -198,10 +192,6 @@
   window.ToolsView = {
     async init() { bind(); await load(); },
     show() { load(); },
-    onSettings(st) {
-      if (document.activeElement !== $('#tl-wtdir')) $('#tl-wtdir').value = st.worktreeDir || '';
-      if (document.activeElement !== $('#tl-dmodel')) $('#tl-dmodel').value = st.dispatchModel || 'haiku';
-    },
     servers: () => S.servers,
     onServers: (fn) => listeners.add(fn),
     pickerHtml,

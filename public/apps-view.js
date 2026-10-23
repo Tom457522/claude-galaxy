@@ -118,7 +118,7 @@
   }
 
   function openWeb(a) {
-    if (a.missing) { alert(`ファイルが見つかりません:\n${a.url}`); return; }
+    if (a.missing) { UI.toast(`ファイルが見つかりません:\n${a.url}`); return; }
     let o = S.open.get(a.id);
     if (!o) {
       const src = frameSrc(a);
@@ -249,7 +249,7 @@
     $('#app-cancel').addEventListener('click', () => $('#dlg-app').close());
     $('#app-delete').addEventListener('click', async () => {
       const a = S.editing;
-      if (!a || !confirm(`「${a.name}」を一覧から削除しますか?`)) return;
+      if (!a || !await UI.confirm(`「${a.name}」を一覧から削除しますか?`)) return;
       try { await api('DELETE', `/api/apps/${a.id}`); } catch (_) { /* ignore */ }
       $('#dlg-app').close();
       refresh();
