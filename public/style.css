@@ -373,7 +373,9 @@ dialog input { width: 100%; margin-top: 4px; color: var(--text); font-size: 13px
   backdrop-filter: blur(10px); font-size: 12px; box-shadow: 0 10px 40px rgba(0, 0, 0, .5);
   border-top: 2px solid var(--accent);
 }
-.g-card .c-name { font-weight: 700; color: #f4ede6; font-size: 15px; word-break: break-all; text-shadow: 0 0 14px rgba(217, 119, 87, .4); }
+.g-card .c-close { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; padding: 0; border: none; border-radius: 4px; background: transparent; color: var(--muted); font-size: 12px; line-height: 22px; cursor: pointer; }
+.g-card .c-close:hover { background: var(--accent-dim); color: #f4ede6; }
+.g-card .c-name { padding-right: 22px; font-weight: 700; color: #f4ede6; font-size: 15px; word-break: break-all; text-shadow: 0 0 14px rgba(217, 119, 87, .4); }
 .g-card .c-path { color: var(--muted); word-break: break-all; margin: 2px 0 8px; font-size: 11px; }
 .g-card .c-row { display: flex; gap: 8px; margin: 2px 0; color: var(--text); }
 .g-card .c-row span:first-child { color: var(--muted); flex: none; width: 72px; }

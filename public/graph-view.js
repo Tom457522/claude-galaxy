@@ -684,9 +684,10 @@
     S.cardNode = node;
     if (!node) { el.classList.add('hidden'); el.innerHTML = ''; return; }
     el.classList.remove('hidden');
+    const close = '<button class="c-close" data-act="close" title="閉じる (Esc)">✕</button>';
     if (node.kind === 'session') {
       const run = (node.agents || []).filter((a) => a.status === 'running').length;
-      el.innerHTML =
+      el.innerHTML = close +
         `<div class="c-name">${esc(node.name)}</div><div class="c-path">${esc(node.cwd)}</div>` +
         `<div class="c-row"><span>状態</span><span>${esc(STATUS_JA[node.status] || node.status)}</span></div>` +
         `<div class="c-row"><span>サブエージェント</span><span>実行中 ${run} / 計 ${(node.agents || []).length}</span></div>` +
@@ -694,14 +695,14 @@
       return;
     }
     if (node.kind === 'hub') {
-      el.innerHTML = `<div class="c-name">HOME</div><div class="c-path">ルートフォルダ ${S.roots.length} 件</div>` +
+      el.innerHTML = close + `<div class="c-name">HOME</div><div class="c-path">ルートフォルダ ${S.roots.length} 件</div>` +
         '<div class="c-btns"><button class="btn" data-act="roots">ルート設定</button></div>';
       return;
     }
     const sess = S.sessions.filter((s) => s.cwd && (keyPath(s.cwd) === keyPath(node.id) || keyPath(s.cwd).startsWith(`${keyPath(node.id)}/`)));
     const exts = (node.topExts || []).map(([e, k]) => `.${esc(e)} ${k}`).join(' / ') || '—';
     const cats = Object.entries(node.cats || {}).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([c, k]) => `${esc(c)} ${k}`).join(' / ') || '—';
-    el.innerHTML =
+    el.innerHTML = close +
       `<div class="c-name">${esc(node.name)}</div><div class="c-path">${esc(node.id)}</div>` +
       `<div class="c-row"><span>ファイル</span><span>直下 ${fmt(node.files)} / 配下合計 ${fmt(node.totalFiles)}</span></div>` +
       `<div class="c-row"><span>サブフォルダ</span><span>${fmt(node.dirs)}${node.more ? `(うち ${fmt(node.more)} 件は未展開)` : ''}</span></div>` +
@@ -770,7 +771,6 @@
     S.hover = node || null;
     S.hl = node ? new Set([node.id, ...(S.adj.get(node.id) || [])]) : null;
     if (S.host) S.host.style.cursor = node ? 'pointer' : '';
-    if (node) renderCard(node);
     restyle();
   }
 
@@ -921,7 +921,8 @@
       const b = e.target.closest('[data-act]');
       if (!b) return;
       const act = b.dataset.act;
-      if (act === 'launch') S.opts.onLaunch(b.dataset.path);
+      if (act === 'close') renderCard(null);
+      else if (act === 'launch') S.opts.onLaunch(b.dataset.path);
       else if (act === 'open-session') S.opts.onOpenSession(b.dataset.id);
       else if (act === 'focus') focusFolder(b.dataset.path);
       else if (act === 'copy') navigator.clipboard.writeText(b.dataset.path).catch(() => {});
@@ -961,7 +962,7 @@
       if (!S.visible || e.key !== 'Escape') return;
       if (document.querySelector('dialog[open]')) return;
       if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
-      goUp();
+      if (S.cardNode) renderCard(null); else goUp();
     });
 
     syncRelUI();
@@ -1004,7 +1005,7 @@
         if (S.f.pin) { n.fx = n.x; n.fy = n.y; n.fz = n.z; n.__pinned = true; } else { n.fx = n.fy = n.fz = undefined; n.__pinned = false; }
         if (S.cardNode === n) renderCard(n);
       })
-      .onBackgroundClick(() => { /* 何もしない(カードは最後に触れたノードのまま残す) */ })
+      .onBackgroundClick(() => renderCard(null))
       .onEngineStop(() => { if (S.fitPending) { S.fitPending = false; if (S.visible) fitView(900); } });
     S.graph = g;
 
