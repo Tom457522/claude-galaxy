@@ -57,6 +57,22 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
 ));
 
+// 使用量(トークン・概算コスト)
+function fmtTok(n) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
+  return String(n);
+}
+const fmtCost = (c) => (c > 0 && c < 0.01 ? '<$0.01' : `$${c.toFixed(2)}`);
+const usageTokens = (u) => (u ? u.input + u.output + u.cacheWrite + u.cacheRead : 0);
+function usageTip(u) {
+  if (!usageTokens(u)) return '';
+  const models = Object.entries(u.models || {}).map(([m, n]) => `  ${m}: ${fmtTok(n)}`).join('\n');
+  return `概算コスト ${fmtCost(u.cost)}${u.unpriced ? `(単価不明の応答 ${u.unpriced} 件は含まず)` : ''}\n` +
+    `入力 ${fmtTok(u.input)} / 出力 ${fmtTok(u.output)} / キャッシュ書込 ${fmtTok(u.cacheWrite)} / キャッシュ読込 ${fmtTok(u.cacheRead)}` +
+    (models ? `\n${models}` : '');
+}
+
 function fmtDur(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
   if (s < 60) return `${s}秒`;
@@ -185,14 +201,18 @@ class Pane {
         <span class="pane-title"></span>
         <span class="pane-state"></span>
         <span class="pane-cwd"></span>
+        <span class="pane-usage"></span>
         <button class="icon-btn max" title="最大化 / 元に戻す">⤢</button>
         <button class="icon-btn close" title="セッションを終了">✕</button>
       </div>
+      <div class="perm-bar hidden"></div>
       <div class="term-wrap"></div>`;
     this.mascotEl = this.el.querySelector('.pane-mascot');
     this.titleEl = this.el.querySelector('.pane-title');
     this.stateEl = this.el.querySelector('.pane-state');
     this.cwdEl = this.el.querySelector('.pane-cwd');
+    this.usageEl = this.el.querySelector('.pane-usage');
+    this.permEl = this.el.querySelector('.perm-bar');
     this.wrap = this.el.querySelector('.term-wrap');
 
     this.term = new Terminal({
@@ -252,6 +272,7 @@ class Pane {
       this.el.classList.add('unread');
     }
     if (!this.info.alive) this.markExited(this.info.exitCode);
+    else if (this.exitBanner) this.clearExited();
   }
 
   updateHead() {
@@ -261,6 +282,9 @@ class Pane {
     this.cwdEl.textContent = `${this.info.cwd}  ·  ${this.info.command}`;
     this.cwdEl.title = this.cwdEl.textContent;
     this.stateEl.textContent = STATUS_LABEL[st];
+    const u = this.info.usage;
+    this.usageEl.textContent = usageTokens(u) ? fmtCost(u.cost) : '';
+    this.usageEl.title = usageTip(u);
     this.el.classList.toggle('dead', !this.info.alive);
     if (this.stClass !== `st-${st}`) {
       if (this.stClass) this.el.classList.remove(this.stClass);
@@ -296,6 +320,9 @@ class Pane {
       } else if (msg.type === 'exit') {
         this.info.alive = false;
         this.markExited(msg.exitCode);
+      } else if (msg.type === 'restarted') {
+        this.info.alive = true;
+        this.clearExited();
       }
     };
     ws.onclose = () => {
@@ -314,14 +341,32 @@ class Pane {
     this.updateHead();
     const b = document.createElement('div');
     b.className = 'exit-banner';
-    b.innerHTML = `<span>プロセスが終了しました (code ${esc(code ?? '?')})</span><button class="btn">同じ設定で再起動</button>`;
-    b.querySelector('button').addEventListener('click', async () => {
-      const { name, cwd, command, appId } = this.info;
-      await closeSession(this.id, { silent: true });
-      try { await addSession({ name, cwd, command, appId }); } catch (e) { alert(e.message); }
+    const msg = this.info.restored ? 'サーバーの再起動で停止しました' : `プロセスが終了しました (code ${esc(code ?? '?')})`;
+    b.innerHTML = `<span>${msg}</span>` +
+      (this.info.resumable ? '<button class="btn primary" data-resume="1" title="claude --resume で、前回の会話の続きから起動します">▶ 会話を再開</button>' : '') +
+      '<button class="btn" data-resume="0">同じ設定で再起動</button>';
+    b.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      btn.disabled = true;
+      try {
+        const info = await api('POST', `/api/sessions/${this.id}/restart`, { resume: btn.dataset.resume === '1' });
+        this.setInfo(info);
+        setFocus(this.id);
+      } catch (err) {
+        alert(err.message);
+        btn.disabled = false;
+      }
     });
     this.wrap.appendChild(b);
     this.exitBanner = b;
+  }
+
+  clearExited() {
+    if (this.exitBanner) { this.exitBanner.remove(); this.exitBanner = null; }
+    this.updateHead();
+    // 終了中に WebSocket が切れていたらつなぎ直す
+    if (!this.ws || this.ws.readyState > 1) { clearTimeout(this.reconnectTimer); this.connect(); }
   }
 
   startRename() {
@@ -403,8 +448,10 @@ class SideRow {
     }
     this.nameEl.textContent = info.name;
     this.labelEl.textContent = STATUS_LABEL[st];
-    this.detailEl.textContent = info.statusDetail ? ` · ${info.statusDetail}` : '';
-    this.el.title = `${info.name} — ${STATUS_LABEL[st]}${info.statusDetail ? ` (${info.statusDetail})` : ''}\n${info.cwd}`;
+    const u = info.usage;
+    this.detailEl.textContent = (info.statusDetail ? ` · ${info.statusDetail}` : '') + (usageTokens(u) ? ` · ${fmtCost(u.cost)}` : '');
+    this.el.title = `${info.name} — ${STATUS_LABEL[st]}${info.statusDetail ? ` (${info.statusDetail})` : ''}\n${info.cwd}` +
+      (usageTokens(u) ? `\n${usageTip(u)}` : '');
 
     const agents = info.agents || [];
     const running = agents.filter((a) => a.status === 'running').length;
@@ -450,6 +497,98 @@ class SideRow {
   }
 }
 
+// ---------- 権限確認の受信箱 ----------
+/** @type {Map<string, any>} */
+const perms = new Map();
+const inboxEl = $('#side-inbox');
+const inboxToggle = $('#inbox-on');
+
+function permTarget(x) {
+  const i = x.input || {};
+  if (i.command) return i.command;
+  if (i.file_path || i.notebook_path) return i.file_path || i.notebook_path;
+  if (i.url) return i.url;
+  if (i.pattern) return `${i.pattern}${i.path ? `  (${i.path})` : ''}`;
+  return i.path || i.prompt || i.input || '';
+}
+
+function permCard(x, { withSession }) {
+  const p = panes.get(x.sessionId);
+  const tool = x.mcpServer ? `${x.tool}` : x.tool;
+  const rules = (x.rules || []).map((r) => `${r.tool}${r.rule ? `(${r.rule})` : ''} → ${r.destination}`).join('\n');
+  const desc = x.input && x.input.description ? `<div class="perm-desc">${esc(x.input.description)}</div>` : '';
+  return `<div class="perm" data-perm="${esc(x.id)}">` +
+    '<div class="perm-head">' +
+      `<b class="perm-tool">${esc(tool)}</b>` +
+      (x.agentType ? `<span class="perm-agent">${esc(x.agentType)}</span>` : '') +
+      (withSession ? `<span class="perm-sess" data-focus="${esc(x.sessionId)}">${esc(p ? p.info.name : x.sessionId)}</span>` : '') +
+      `<span class="perm-time" data-exp="${x.expiresAt}"></span>` +
+    '</div>' +
+    desc +
+    `<pre class="perm-body">${esc(permTarget(x))}</pre>` +
+    '<div class="perm-acts">' +
+      '<button class="btn primary" data-act="allow">許可</button>' +
+      (rules ? `<button class="btn" data-act="always" title="次のルールを追加して許可:\n${esc(rules)}">今後も許可</button>` : '') +
+      '<button class="btn danger" data-act="deny">拒否</button>' +
+      '<button class="btn" data-act="ask" title="この確認をターミナルの通常のダイアログで答えます">ターミナルで</button>' +
+    '</div></div>';
+}
+
+function renderInbox() {
+  const list = [...perms.values()].sort((a, b) => a.at - b.at);
+  inboxEl.innerHTML = list.length
+    ? `<div class="inbox-title">承認待ち <b>${list.length}</b></div>${list.map((x) => permCard(x, { withSession: true })).join('')}`
+    : '';
+  inboxEl.classList.toggle('hidden', !list.length);
+  for (const p of panes.values()) {
+    const mine = list.filter((x) => x.sessionId === p.id);
+    p.permEl.innerHTML = mine.map((x) => permCard(x, { withSession: false })).join('');
+    p.permEl.classList.toggle('hidden', !mine.length);
+  }
+  tickInbox();
+  renderSummary();
+  relayout();
+}
+
+function tickInbox() {
+  for (const el of document.querySelectorAll('.perm-time[data-exp]')) {
+    const left = Number(el.dataset.exp) - Date.now();
+    el.textContent = left > 0 ? `あと ${fmtDur(left)}` : '';
+  }
+}
+
+document.addEventListener('click', async (e) => {
+  const sess = e.target.closest('.perm-sess[data-focus]');
+  if (sess) { if (curTab !== 'term') setTab('term'); setFocus(sess.dataset.focus); return; }
+  const btn = e.target.closest('.perm [data-act]');
+  if (!btn) return;
+  const card = btn.closest('.perm');
+  const id = card.dataset.perm;
+  const act = btn.dataset.act;
+  const body = act === 'allow' ? { behavior: 'allow' }
+    : act === 'always' ? { behavior: 'allow', always: true }
+      : act === 'deny' ? { behavior: 'deny' } : { behavior: 'ask' };
+  for (const b of document.querySelectorAll(`.perm[data-perm="${id}"] button`)) b.disabled = true;
+  try { await api('POST', `/api/permissions/${id}`, body); } catch (_) { /* もう終わっている */ }
+  const x = perms.get(id);
+  perms.delete(id);
+  renderInbox();
+  if (x && act === 'ask') { if (curTab !== 'term') setTab('term'); setFocus(x.sessionId); }
+});
+
+inboxToggle.addEventListener('change', async () => {
+  try { await api('PUT', '/api/settings', { permissionInbox: inboxToggle.checked }); } catch (e) { alert(e.message); }
+});
+
+async function resyncPermissions() {
+  try {
+    const list = await api('GET', '/api/permissions');
+    perms.clear();
+    for (const x of list) perms.set(x.id, x);
+    renderInbox();
+  } catch (e) { console.error(e); }
+}
+
 // ---------- 画面操作 ----------
 function setFocus(id) {
   focusedId = id;
@@ -489,16 +628,20 @@ function renderSummary() {
   const infos = [...panes.values()].map((p) => p.info);
   const count = (st) => infos.filter((i) => i.status === st).length;
   const agents = infos.reduce((n, i) => n + (i.agents || []).filter((a) => a.status === 'running').length, 0);
-  const waiting = count('waiting');
+  const waiting = Math.max(count('waiting'), perms.size);
+  const cost = infos.reduce((n, i) => n + (i.usage ? i.usage.cost : 0), 0);
+  const tokens = infos.reduce((n, i) => n + usageTokens(i.usage), 0);
   sideSummary.innerHTML =
     `<span>セッション <b>${infos.length}</b></span>` +
     `<span>作業中 <b>${count('working')}</b></span>` +
     `<span class="sum-wait">入力待ち <b>${waiting}</b></span>` +
-    `<span>サブエージェント <b>${agents}</b></span>`;
+    `<span>サブエージェント <b>${agents}</b></span>` +
+    (tokens ? `<span title="保存されているセッションの合計(概算)">コスト <b>${fmtCost(cost)}</b> · ${fmtTok(tokens)} tok</span>` : '');
   if (!infos.length && !sideList.querySelector('.srow')) {
     sideList.innerHTML = '<p class="side-empty">セッションなし</p>';
   }
-  document.title = waiting ? `(${waiting}) 入力待ち — ${TITLE}` : TITLE;
+  document.title = perms.size ? `(${perms.size}) 承認待ち — ${TITLE}`
+    : waiting ? `(${waiting}) 入力待ち — ${TITLE}` : TITLE;
   const badge = $('#tab-badge');
   badge.textContent = waiting || '';
   badge.classList.toggle('on', waiting > 0);
@@ -517,6 +660,7 @@ function onSession(info) {
     sideList.appendChild(row.el);
     relayout();
     if (!focusedId) setFocus(info.id);
+    if (perms.size) renderInbox();
   } else {
     p.setInfo(info);
     rows.get(info.id)?.update(p.info);
@@ -550,6 +694,8 @@ async function closeSession(id, { silent = false } = {}) {
   const p = panes.get(id);
   if (!p) return;
   if (!silent && p.info.alive && !confirm(`「${p.info.name}」を終了しますか?\n実行中のプロセスは停止されます。`)) return;
+  if (!silent && !p.info.alive && p.info.resumable &&
+      !confirm(`「${p.info.name}」を一覧から削除しますか?\nこのアプリからは再開できなくなります(Claude 側の会話履歴は残り、claude --resume で開けます)。`)) return;
   try { await api('DELETE', `/api/sessions/${id}`); } catch (_) { /* ignore */ }
   removePane(id);
 }
@@ -656,7 +802,7 @@ window.addEventListener('keydown', (e) => {
 
 window.addEventListener('resize', () => { for (const p of panes.values()) p.refit(); });
 
-setInterval(() => { for (const r of rows.values()) r.tick(); }, 1000);
+setInterval(() => { for (const r of rows.values()) r.tick(); tickInbox(); }, 1000);
 
 // ---------- サーバーからの状態配信(SSE) ----------
 async function resync() {
@@ -674,7 +820,10 @@ function connectEvents() {
   const es = new EventSource('/api/events');
   es.addEventListener('session', (e) => onSession(JSON.parse(e.data)));
   es.addEventListener('removed', (e) => removePane(JSON.parse(e.data).id));
-  es.onopen = () => { resync(); }; // 切断→再接続時に取りこぼしを補う
+  es.addEventListener('permission', (e) => { const x = JSON.parse(e.data); perms.set(x.id, x); renderInbox(); });
+  es.addEventListener('permission-removed', (e) => { if (perms.delete(JSON.parse(e.data).id)) renderInbox(); });
+  es.addEventListener('settings', (e) => { inboxToggle.checked = !!JSON.parse(e.data).permissionInbox; });
+  es.onopen = () => { resync(); resyncPermissions(); }; // 切断→再接続時に取りこぼしを補う
 }
 
 // ---------- 起動 ----------
@@ -691,6 +840,7 @@ function connectEvents() {
     onLaunchCommand: launchCommandApp,
   });
   await resync();
+  api('GET', '/api/settings').then((st) => { inboxToggle.checked = !!st.permissionInbox; }).catch(() => {});
   const first = [...panes.keys()][0];
   if (first && !focusedId) setFocus(first);
   setTab(curTab);

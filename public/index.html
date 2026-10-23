@@ -32,8 +32,10 @@
       <div class="side-head">
         <button id="btn-side" class="icon-btn" title="サイドバーを開閉">«</button>
         <span class="side-title">エージェント</span>
+        <label class="inbox-toggle" title="オンにすると、Claude の権限確認(ツールの実行許可)をここで許可/拒否できます。&#10;オフなら従来どおりターミナルの確認ダイアログで答えます。"><input type="checkbox" id="inbox-on"> 受信箱で承認</label>
       </div>
       <div id="side-summary" class="side-summary"></div>
+      <div id="side-inbox" class="side-inbox hidden"></div>
       <div id="side-list" class="side-list"></div>
     </aside>
 
