@@ -81,66 +81,61 @@ function fmtDur(ms) {
   return `${Math.floor(m / 60)}時間${m % 60}分`;
 }
 
-// ---------- オリジナルキャラクター「ぽこ」 ----------
-// 状態ごとに表情と色(CSS の .st-* )が変わる。アニメーションも状態ごとに別。
+// ---------- キャラクター(32x32 のドット絵) ----------
+// 状態ごとに目・記号・腕の位置と色(CSS の .st-* )が変わる。アニメーションも状態ごとに別。
+const px = (x, y, w, h, cls) => `<rect class="${cls}" x="${x}" y="${y}" width="${w}" height="${h}"/>`;
+const eyes = (f) => f(8) + f(22); // 左目と右目(x は目の左端)
 const FACES = {
-  idle:
-    '<path class="ln" d="M14 31 Q17 34 20 31"/><path class="ln" d="M28 31 Q31 34 34 31"/>' +
-    '<path class="ln" d="M21 38 Q24 40.5 27 38"/>',
+  idle: eyes((x) => px(x, 10, 2, 4, 'eye')),
   working:
-    '<circle class="eye" cx="17" cy="31" r="3"/><circle class="eye" cx="31" cy="31" r="3"/>' +
-    '<circle class="glint" cx="18" cy="30" r="1"/><circle class="glint" cx="32" cy="30" r="1"/>' +
-    '<path class="ln" d="M12.5 25.5 L20 27.5"/><path class="ln" d="M35.5 25.5 L28 27.5"/>' +
-    '<path class="ln" d="M21.5 39 L26.5 39"/>' +
-    '<path class="sweat" d="M39 17 Q41.5 21 39 23 Q36.5 21 39 17Z"/>',
+    eyes((x) => px(x, 12, 2, 2, 'eye') + px(x - 1, 10, 4, 1, 'eye')) +
+    px(28, 3, 1, 2, 'sweat') + px(27, 5, 3, 1, 'sweat') +
+    px(10, 1, 3, 3, 'dot d1') + px(15, 1, 3, 3, 'dot d2') + px(20, 1, 3, 3, 'dot d3'),
   waiting:
-    '<circle class="eye" cx="17" cy="31" r="3.6"/><circle class="eye" cx="31" cy="31" r="3.6"/>' +
-    '<circle class="glint" cx="18" cy="29.5" r="1.2"/><circle class="glint" cx="32" cy="29.5" r="1.2"/>' +
-    '<ellipse class="mouth" cx="24" cy="39.5" rx="2.2" ry="2.8"/>' +
-    '<text class="mark" x="37" y="13">?</text>',
+    eyes((x) => px(x, 10, 2, 4, 'eye')) +
+    px(26, 0, 3, 1, 'mark') + px(28, 1, 1, 1, 'mark') + px(27, 2, 1, 1, 'mark') + px(27, 4, 1, 1, 'mark'),
   done:
-    '<path class="ln" d="M14 33 Q17 28 20 33"/><path class="ln" d="M28 33 Q31 28 34 33"/>' +
-    '<path class="mouth" d="M19 37.5 Q24 46 29 37.5Z"/>' +
-    '<circle class="cheek" cx="12.5" cy="37" r="2.4"/><circle class="cheek" cx="35.5" cy="37" r="2.4"/>' +
-    '<path class="spark" d="M40 8 L41.2 11.2 L44.4 12.4 L41.2 13.6 L40 16.8 L38.8 13.6 L35.6 12.4 L38.8 11.2Z"/>',
-  error:
-    '<path class="ln" d="M14.5 28.5 L19.5 33.5 M19.5 28.5 L14.5 33.5"/>' +
-    '<path class="ln" d="M28.5 28.5 L33.5 33.5 M33.5 28.5 L28.5 33.5"/>' +
-    '<path class="ln" d="M19 40.5 Q21.5 37.5 24 40.5 T29 40.5"/>',
+    eyes((x) => px(x - 1, 12, 1, 1, 'eye') + px(x, 11, 2, 1, 'eye') + px(x + 2, 12, 1, 1, 'eye')) +
+    px(28, 0, 1, 3, 'spark') + px(27, 1, 3, 1, 'spark') + px(2, 3, 1, 1, 'spark'),
+  error: eyes((x) =>
+    px(x - 1, 10, 1, 1, 'eye') + px(x + 2, 10, 1, 1, 'eye') + px(x, 11, 2, 2, 'eye') +
+    px(x - 1, 13, 1, 1, 'eye') + px(x + 2, 13, 1, 1, 'eye')),
   exited:
-    '<path class="ln" d="M14 32 L20 32"/><path class="ln" d="M28 32 L34 32"/>' +
-    '<path class="ln" d="M22 39 L26 39"/><text class="mark" x="36" y="14">z</text>',
+    eyes((x) => px(x - 1, 12, 4, 1, 'eye')) +
+    px(26, 1, 3, 1, 'mark') + px(27, 2, 1, 1, 'mark') + px(26, 3, 3, 1, 'mark'),
 };
 FACES.starting = FACES.idle;
+
+// 体・脚・腕。完了のときだけ腕を上げる。
+function mascotBody(st) {
+  const ay = st === 'done' ? 11 : 16;
+  return (
+    px(4, 6, 24, 16, 'm-body') +
+    px(6, 20, 2, 6, 'm-body leg-a') + px(10, 20, 2, 6, 'm-body leg-b') +
+    px(20, 20, 2, 6, 'm-body leg-a') + px(24, 20, 2, 6, 'm-body leg-b') +
+    px(0, ay, 5, 4, 'm-body') + px(27, ay, 5, 4, 'm-body')
+  );
+}
 
 function mascot(status) {
   const st = normStatus(status);
   return (
-    `<svg class="mascot st-${st}" viewBox="0 0 48 52" role="img" aria-label="${STATUS_LABEL[st]}">` +
-    '<g class="m-all">' +
-    '<path class="m-body" d="M24 3 C28 11 41 17 41 31 C41 41 33 48 24 48 C15 48 7 41 7 31 C7 17 20 11 24 3 Z"/>' +
-    '<ellipse class="shine" cx="16.5" cy="27" rx="2.6" ry="5" transform="rotate(20 16.5 27)"/>' +
-    FACES[st] +
-    '</g></svg>'
+    `<svg class="mascot st-${st}" viewBox="0 0 32 32" shape-rendering="crispEdges" role="img" aria-label="${STATUS_LABEL[st]}">` +
+    `<g class="m-all">${mascotBody(st)}${FACES[st]}</g></svg>`
   );
 }
 
 // 3D グラフ用: CSS に依存しない単体 SVG(静止画。状態ごとにキャッシュされる)
 const MASCOT_COLORS = {
-  starting: '#d97757', idle: '#d97757', working: '#f08a5d', waiting: '#e5b567',
-  done: '#8fbf7f', error: '#e5484d', exited: '#5b534c',
+  starting: '#d77757', idle: '#d77757', working: '#4ea1ff', waiting: '#ffc53d',
+  done: '#3fc56b', error: '#ff4d5e', exited: '#6e6862',
 };
 function mascotImageURL(status) {
   const st = normStatus(status);
   const c = MASCOT_COLORS[st];
-  const style = `.m-body{fill:${c};stroke:rgba(0,0,0,.35);stroke-width:1}.shine{fill:#fff;opacity:.22}` +
-    '.ln{fill:none;stroke:#1a0f0a;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}' +
-    '.eye,.mouth{fill:#1a0f0a}.glint{fill:#fff}.cheek{fill:#ff9d8a;opacity:.6}.sweat{fill:#7fc4ff}' +
-    `.mark{fill:${c};font:700 14px monospace}.spark{fill:#fff3b0}`;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="192" height="208" viewBox="0 0 48 52"><style>${style}</style>` +
-    '<path class="m-body" d="M24 3 C28 11 41 17 41 31 C41 41 33 48 24 48 C15 48 7 41 7 31 C7 17 20 11 24 3 Z"/>' +
-    '<ellipse class="shine" cx="16.5" cy="27" rx="2.6" ry="5" transform="rotate(20 16.5 27)"/>' +
-    `${FACES[st]}</svg>`;
+  const style = `.m-body{fill:${c}}.eye{fill:#000}.sweat{fill:#7fc4ff}.mark{fill:${c}}.spark{fill:#fff3b0}.dot{fill:#fff}`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 32 32" shape-rendering="crispEdges"><style>${style}</style>` +
+    `${mascotBody(st)}${FACES[st]}</svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 

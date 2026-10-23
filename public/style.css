@@ -152,40 +152,47 @@ select:focus, input[type="text"]:focus, input[type="number"]:focus { outline: no
 .sidebar.collapsed .srow-main { justify-content: center; }
 .sidebar.collapsed .srow { padding: 8px 0; }
 
-/* ---- キャラクター(オリジナル「ぽこ」) ---- */
-.mascot { --c: #d97757; display: block; }
-.mascot .m-all { transform-box: fill-box; transform-origin: 50% 100%; }
-.mascot .m-body { fill: var(--c); stroke: rgba(0, 0, 0, .35); stroke-width: 1; }
-.mascot .shine { fill: #fff; opacity: .22; }
-.mascot .ln { fill: none; stroke: #1a0f0a; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.mascot .eye, .mascot .mouth { fill: #1a0f0a; }
-.mascot .glint { fill: #fff; }
-.mascot .cheek { fill: #ff9d8a; opacity: .6; }
+/* ---- キャラクター(32x32 のドット絵) ---- */
+.mascot { --c: #d77757; display: block; }
+.mascot .m-body { fill: var(--c); }
+.mascot .eye { fill: #000; transform-box: fill-box; transform-origin: 50% 50%; }
 .mascot .sweat { fill: #7fc4ff; }
-.mascot .mark { fill: var(--c); font: 700 14px var(--mono); }
+.mascot .mark { fill: var(--c); }
 .mascot .spark { fill: #fff3b0; }
+.mascot .dot { fill: #fff; }
 
-.mascot.st-starting, .mascot.st-idle { --c: #d97757; }
-.mascot.st-working { --c: #f08a5d; }
-.mascot.st-waiting { --c: #e5b567; }
-.mascot.st-done { --c: #8fbf7f; }
-.mascot.st-error { --c: #e5484d; }
-.mascot.st-exited { --c: #5b534c; }
+.mascot.st-starting, .mascot.st-idle { --c: #d77757; }
+.mascot.st-working { --c: #4ea1ff; }
+.mascot.st-waiting { --c: #ffc53d; }
+.mascot.st-done { --c: #3fc56b; }
+.mascot.st-error { --c: #ff4d5e; }
+.mascot.st-exited { --c: #6e6862; }
 
-.mascot.st-starting .m-all, .mascot.st-idle .m-all { animation: breathe 3.2s ease-in-out infinite; }
-.mascot.st-working .m-all { animation: wiggle .55s ease-in-out infinite; }
-.mascot.st-working .sweat { animation: drip 1.1s ease-in infinite; }
-.mascot.st-waiting .m-all { animation: bounce .9s ease-in-out infinite; }
-.mascot.st-done .m-all { animation: hop .55s ease-out 3; }
-.mascot.st-error .m-all { animation: shake .35s linear infinite; }
-@keyframes breathe { 50% { transform: scaleY(1.04) scaleX(.98); } }
-@keyframes wiggle { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(4deg); } }
-@keyframes drip { 0% { transform: translateY(-2px); opacity: 0; } 30% { opacity: 1; } 100% { transform: translateY(9px); opacity: 0; } }
-@keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
-@keyframes hop { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-6px) scaleY(1.05); } }
-@keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-2px); } 75% { transform: translateX(2px); } }
+/* ドット絵らしく、動きはすべて 1 ドット単位でカクッと切り替える(steps) */
+/* 待機中は体を動かさずまばたきだけ。作業中は歩く+頭の上の「…」が流れる */
+.mascot.st-starting .eye, .mascot.st-idle .eye, .mascot.st-waiting .eye { animation: px-blink 4s steps(1) infinite; }
+.mascot.st-working .leg-a { animation: px-step .4s steps(1) infinite; }
+.mascot.st-working .leg-b { animation: px-step .4s steps(1) infinite -.2s; }
+.mascot.st-working .m-all { animation: px-bob .4s steps(1) infinite; }
+.mascot.st-working .sweat { animation: px-drip .8s steps(4) infinite; }
+.mascot.st-working .dot { animation: px-dot .9s steps(1) infinite; }
+.mascot.st-working .d2 { animation-delay: .3s; }
+.mascot.st-working .d3 { animation-delay: .6s; }
+.mascot.st-waiting .m-all { animation: px-hop 1s steps(1) infinite; }
+.mascot.st-waiting .mark { animation: px-flash 1s steps(1) infinite; }
+.mascot.st-done .m-all { animation: px-hop .5s steps(1) 4; }
+.mascot.st-done .spark { animation: px-flash .6s steps(1) infinite; }
+.mascot.st-error .m-all { animation: px-shake .2s steps(1) infinite; }
+@keyframes px-bob { 0% { transform: translateY(0); } 50% { transform: translateY(1px); } }
+@keyframes px-step { 0% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+@keyframes px-blink { 0% { transform: scaleY(1); } 94% { transform: scaleY(.25); } }
+@keyframes px-drip { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(4px); opacity: 0; } }
+@keyframes px-hop { 0% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes px-dot { 0% { opacity: 1; } 33% { opacity: .2; } }
+@keyframes px-flash { 0% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes px-shake { 0% { transform: translateX(-1px); } 50% { transform: translateX(1px); } }
 @media (prefers-reduced-motion: reduce) {
-  .mascot .m-all, .mascot .sweat, .arow.running .aicon, .srow.st-waiting { animation: none !important; }
+  .mascot .m-all, .mascot .eye, .mascot rect, .arow.running .aicon, .srow.st-waiting { animation: none !important; }
 }
 
 /* ---- グリッド ---- */
