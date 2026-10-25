@@ -60,6 +60,24 @@
           <div id="g-stats" class="g-stats"></div>
           <div id="g-warn" class="g-warn hidden"></div>
         </div>
+        <div id="g-view" class="g-view" role="group" aria-label="表示の切り替え">
+          <button data-view="3d" title="フォルダ構造の 3D グラフ">3D</button><button data-view="2d" title="ルートフォルダごとのカード一覧">2D</button>
+        </div>
+
+        <!-- ホーム: 2D 表示(ルートフォルダごとのカード一覧) -->
+        <div id="home2d" class="home2d">
+          <div class="h2-bar">
+            <label>並び <select id="h2-sort">
+              <option value="sessions">セッション優先</option>
+              <option value="files">ファイル数</option>
+              <option value="name">名前</option>
+            </select></label>
+            <button class="btn" data-act="expand-all">すべて開く</button>
+            <button class="btn" data-act="collapse-all">すべて閉じる</button>
+            <span id="h2-note" class="g-note"></span>
+          </div>
+          <div id="h2-list" class="h2-list"></div>
+        </div>
 
         <aside id="g-panel" class="g-panel">
           <div class="g-panel-head">
@@ -73,7 +91,7 @@
               <label class="g-chk"><input type="checkbox" id="g-search-only"> 一致するものだけ表示</label>
             </div>
 
-            <div class="g-sec">
+            <div class="g-sec g-3d-only">
               <div class="g-lbl">リレーション</div>
               <label class="g-chk"><input type="checkbox" id="g-rel-contains"><i class="sw sw-contains"></i>親子(フォルダ構造)</label>
               <label class="g-chk"><input type="checkbox" id="g-rel-import"><i class="sw sw-import"></i>依存(import / 相対参照)</label>
@@ -96,11 +114,11 @@
               <label class="g-chk"><input type="checkbox" id="g-only-sessions"> セッションのあるフォルダだけ</label>
               <label class="g-chk"><input type="checkbox" id="g-hidden"> 隠しフォルダ(.xxx)を含める</label>
               <label class="g-chk"><input type="checkbox" id="g-ignored"> node_modules 等も含める</label>
-              <label class="g-chk"><input type="checkbox" id="g-labels"> ラベルを表示</label>
-              <label class="g-chk"><input type="checkbox" id="g-pin"> ドラッグした位置に固定</label>
+              <label class="g-chk g-3d-only"><input type="checkbox" id="g-labels"> ラベルを表示</label>
+              <label class="g-chk g-3d-only"><input type="checkbox" id="g-pin"> ドラッグした位置に固定</label>
             </div>
 
-            <div class="g-sec">
+            <div class="g-sec g-3d-only">
               <div class="g-lbl">色分け</div>
               <select id="g-color">
                 <option value="cat">主な言語</option>
@@ -110,8 +128,8 @@
             </div>
 
             <div class="g-sec g-btns">
-              <button id="g-relayout" class="btn" title="固定を解除して、配置を最初から最適化し直します">再配置</button>
-              <button id="g-fit" class="btn" title="全体が見える位置にカメラを移動">全体表示</button>
+              <button id="g-relayout" class="btn g-3d-only" title="固定を解除して、配置を最初から最適化し直します">再配置</button>
+              <button id="g-fit" class="btn g-3d-only" title="全体が見える位置にカメラを移動">全体表示</button>
               <button id="g-roots" class="btn">ルート設定</button>
             </div>
           </div>
@@ -124,7 +142,7 @@
         <div id="g-empty" class="g-empty hidden">
           <div class="g-empty-box">
             <p class="g-empty-title">ルートフォルダを追加してください</p>
-            <p class="g-empty-sub">プロジェクトを置いているフォルダを指定すると、その構造が 3D グラフになります。</p>
+            <p class="g-empty-sub">プロジェクトを置いているフォルダを指定すると、その構造が 3D グラフ / 2D の一覧になります。</p>
             <button id="g-empty-btn" class="btn primary">ルートフォルダを設定</button>
           </div>
         </div>
@@ -714,6 +732,7 @@
   <script src="/vendor/graph3d.bundle.js"></script>
   <script src="/ui.js"></script>
   <script src="/graph-view.js"></script>
+  <script src="/home2d-view.js"></script>
   <script src="/apps-view.js"></script>
   <script src="/jobs-view.js"></script>
   <script src="/board-view.js"></script>

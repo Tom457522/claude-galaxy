@@ -416,6 +416,79 @@ textarea:focus { outline: none; border-color: var(--accent); }
 .roots-suggest { margin: 4px 0 8px; }
 .g-note { color: var(--muted); font-size: 11px; margin: 4px 0; }
 
+/* ---- ホーム: 3D / 2D の切り替えと 2D 表示(ルートごとのカード一覧) ---- */
+.g-view {
+  position: absolute; top: 10px; right: 292px; display: flex; border: 1px solid rgba(217, 119, 87, .3); border-radius: 6px; overflow: hidden;
+  background: rgba(12, 10, 9, .8); backdrop-filter: blur(6px);
+}
+.home:has(.g-panel.collapsed) .g-view { right: 134px; }
+.g-view button { background: none; border: 0; color: var(--muted); font: 700 11px var(--mono); letter-spacing: .12em; padding: 4px 11px; cursor: pointer; }
+.g-view button:hover { color: var(--accent-bright); }
+.g-view button.on { background: var(--accent-dim); color: var(--accent-bright); }
+.home2d { display: none; }
+.home.view-2d .home2d {
+  position: absolute; left: 12px; top: 104px; right: 292px; bottom: 10px; display: flex; flex-direction: column; gap: 6px;
+}
+.home.view-2d:has(.g-apps:not(:empty)) .home2d { left: 274px; }
+.home.view-2d:has(.g-panel.collapsed) .home2d { right: 134px; }
+.home.view-2d .graph3d { visibility: hidden; }
+.home.view-2d .g-3d-only, .home.view-2d .g-hint, .home.view-2d .g-card { display: none !important; }
+.h2-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.h2-bar .btn { padding: 2px 9px; font-size: 12px; }
+.h2-bar select { margin-left: 4px; }
+.h2-bar .g-note { margin: 0 0 0 auto; }
+.h2-list { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
+.h2-sec { margin-bottom: 14px; }
+.h2-sec-head {
+  display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border-bottom: 1px solid rgba(217, 119, 87, .3);
+  cursor: pointer; user-select: none; position: sticky; top: 0; z-index: 1; background: rgba(6, 5, 5, .92);
+}
+.h2-sec-head b { color: var(--heading); font-size: 14px; }
+.h2-path { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.h2-meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.h2-meta em { font-style: normal; color: var(--accent-bright); }
+.h2-caret { color: var(--accent); width: 10px; flex: none; font-size: 10px; }
+.h2-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; padding-top: 8px; }
+.h2-card {
+  display: flex; flex-direction: column; gap: 4px; padding: 9px 11px; border: 1px solid rgba(217, 119, 87, .16); border-left: 3px solid var(--cat);
+  border-radius: 8px; background: linear-gradient(180deg, rgba(26, 20, 17, .82), rgba(12, 10, 9, .85)); font-size: 12px; min-width: 0;
+}
+.h2-card:hover { border-color: rgba(217, 119, 87, .38); border-left-color: var(--cat); }
+.h2-card.dim, .h2-row.dim { opacity: .3; }
+.h2-card.hit { box-shadow: 0 0 0 1px var(--accent), 0 0 16px rgba(217, 119, 87, .3); }
+.h2-row.hit .h2-row-name { color: var(--accent-bright); font-weight: 700; }
+.h2-card-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.h2-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; background: var(--cat); }
+.h2-name { color: var(--heading); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.h2-count { color: var(--text); white-space: nowrap; }
+.h2-count small { color: var(--muted); }
+.h2-sub { color: var(--muted); font-size: 11px; }
+.h2-sesses { display: flex; flex-direction: column; gap: 2px; }
+.h2-direct { flex-direction: row; flex-wrap: wrap; gap: 4px 10px; padding: 6px 4px 0; }
+.h2-sess {
+  display: flex; align-items: center; gap: 6px; padding: 2px 4px; border: 0; border-radius: 4px; background: none;
+  color: var(--text); font: inherit; text-align: left; cursor: pointer; min-width: 0;
+}
+.h2-sess:hover { background: var(--accent-dim); }
+.h2-sess .mini { width: 16px; height: 18px; flex: none; }
+.h2-sess .mini svg { width: 100%; height: 100%; }
+.h2-sess-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h2-sess small { color: var(--muted); white-space: nowrap; }
+.h2-more { align-self: flex-start; background: none; border: 0; padding: 1px 0; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; }
+.h2-more:hover { color: var(--accent-bright); }
+.h2-tree { border-top: 1px solid rgba(255, 255, 255, .05); padding-top: 3px; max-height: 260px; overflow-y: auto; }
+.h2-row { display: flex; align-items: center; gap: 5px; padding: 1px 2px 1px calc(var(--lv) * 14px + 2px); border-radius: 4px; }
+.h2-row[data-act] { cursor: pointer; }
+.h2-row:hover { background: rgba(217, 119, 87, .08); }
+.h2-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h2-row-n { color: var(--muted); font-size: 11px; }
+.h2-badge { color: var(--accent-bright); font-size: 10px; white-space: nowrap; }
+.h2-row-go { background: none; border: 1px solid transparent; border-radius: 4px; color: var(--muted); font-size: 9px; padding: 0 5px; cursor: pointer; visibility: hidden; }
+.h2-row:hover .h2-row-go, .h2-sec-head:hover .h2-row-go { visibility: visible; }
+.h2-row-go:hover { border-color: var(--accent); color: var(--accent-bright); }
+.h2-btns { display: flex; flex-wrap: wrap; gap: 5px; margin-top: auto; padding-top: 4px; }
+.h2-btns .btn { padding: 2px 8px; font-size: 11px; }
+
 /* ---- ホーム: MICRO APPS パネル ---- */
 .g-apps {
   position: absolute; left: 12px; top: 104px; width: 250px; max-height: calc(100% - 150px); overflow-y: auto;

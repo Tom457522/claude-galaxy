@@ -84,14 +84,20 @@
     fitPending: false,
     loadedOnce: false,
     panelCollapsed: !!saved.panelCollapsed,
+    view: saved.view === '2d' ? '2d' : '3d', // ホームの表示(3D グラフ / 2D のカード一覧)
   };
   S.f.search = '';
   S.f.disabledCats = new Set(S.f.disabledCats);
 
   const curRel = () => S.rel[S.mode];
+  // データやセッションが変わったことを 2D 表示(Home2DView)に知らせる
+  const subs = [];
+  function notify() {
+    for (const fn of subs) { try { fn(); } catch (e) { console.error(e); } }
+  }
   function persist() {
     store.set('gSettings', {
-      rel: S.rel, disabledCats: [...S.f.disabledCats], panelCollapsed: S.panelCollapsed,
+      rel: S.rel, disabledCats: [...S.f.disabledCats], panelCollapsed: S.panelCollapsed, view: S.view,
       f: { searchOnly: S.f.searchOnly, minFiles: S.f.minFiles, onlySessions: S.f.onlySessions, hidden: S.f.hidden, ignored: S.f.ignored, labels: S.f.labels, pin: S.f.pin, color: S.f.color },
     });
   }
@@ -356,7 +362,7 @@
   let lastMeasure = 0;
   function tick(t) {
     rafId = 0;
-    if (!S.visible) return;
+    if (!S.visible || S.view === '2d') return;
     if (t - lastMeasure > 800) { lastMeasure = t; measureGraph(); }
     animateDecor(t);
     animateNodes(t);
@@ -564,6 +570,7 @@
     renderCats();
     renderCard(null);
     $('#g-empty').classList.toggle('hidden', S.roots.length > 0 || S.mode === 'focus');
+    notify();
   }
 
   function sessionSignature() {
@@ -821,6 +828,7 @@
       n.agents = s.agents || [];
     }
     if (changed && S.cardNode && S.cardNode.kind !== 'folder') renderCard(S.cardNode);
+    notify();
   }
 
   // ---- UI ----
@@ -831,6 +839,27 @@
     $('#g-rel-session').checked = r.session;
     $('#g-depth').value = S.depth[S.mode];
     $('#g-depth-v').textContent = S.depth[S.mode];
+  }
+
+  // ホームの表示を切り替える(2D のあいだは 3D の描画を止めて GPU を使わない)
+  function setView(v) {
+    S.view = v === '2d' ? '2d' : '3d';
+    persist();
+    applyView();
+  }
+  function applyView() {
+    const is2d = S.view === '2d';
+    $('#home').classList.toggle('view-2d', is2d);
+    for (const b of document.querySelectorAll('#g-view [data-view]')) b.classList.toggle('on', b.dataset.view === S.view);
+    if (is2d) {
+      renderCard(null);
+      if (S.graph) S.graph.pauseAnimation();
+    } else if (S.visible) {
+      resize();
+      S.graph.resumeAnimation();
+      startLoop();
+    }
+    notify();
   }
 
   function applyLinkVisibility() {
@@ -851,11 +880,11 @@
     $('#g-search').addEventListener('input', debounce((e) => {
       S.f.search = e.target.value;
       if (S.f.searchOnly) rebuild({ layout: false });
-      else { for (const n of S.nodes) n.__match = !!S.f.search.trim() && (n.name.toLowerCase().includes(S.f.search.trim().toLowerCase()) || n.id.toLowerCase().includes(S.f.search.trim().toLowerCase())); restyle(); }
+      else { for (const n of S.nodes) n.__match = !!S.f.search.trim() && (n.name.toLowerCase().includes(S.f.search.trim().toLowerCase()) || n.id.toLowerCase().includes(S.f.search.trim().toLowerCase())); restyle(); notify(); }
     }, 140));
     $('#g-search').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { const m = S.nodes.find((n) => n.__match && n.kind !== 'session'); if (m) flyTo(m); }
-      if (e.key === 'Escape') { e.target.value = ''; S.f.search = ''; e.target.blur(); if (S.f.searchOnly) rebuild({ layout: false }); else { for (const n of S.nodes) n.__match = false; restyle(); } e.stopPropagation(); }
+      if (e.key === 'Escape') { e.target.value = ''; S.f.search = ''; e.target.blur(); if (S.f.searchOnly) rebuild({ layout: false }); else { for (const n of S.nodes) n.__match = false; restyle(); notify(); } e.stopPropagation(); }
     });
     $('#g-search-only').checked = S.f.searchOnly;
     $('#g-search-only').addEventListener('change', (e) => { S.f.searchOnly = e.target.checked; persist(); rebuild({ layout: false }); });
@@ -895,6 +924,10 @@
     $('#g-color').value = S.f.color;
     $('#g-color').addEventListener('change', (e) => { S.f.color = e.target.value; persist(); rebuild({ layout: false }); });
 
+    $('#g-view').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-view]');
+      if (b) setView(b.dataset.view);
+    });
     $('#g-relayout').addEventListener('click', () => { rebuild({ layout: true }); });
     $('#g-fit').addEventListener('click', () => fitView(600));
     $('#g-roots').addEventListener('click', openRootsDialog);
@@ -1042,6 +1075,7 @@
     S.opts = opts;
     createGraph();
     bindUI();
+    applyView();
     try {
       const d = await fetch('/api/defaults').then((r) => r.json());
       S.suggested = d.suggestedRoots || [];
@@ -1062,9 +1096,11 @@
   function show() {
     tickClock();
     S.visible = true;
-    resize();
-    S.graph.resumeAnimation();
-    startLoop();
+    if (S.view === '3d') {
+      resize();
+      S.graph.resumeAnimation();
+      startLoop();
+    }
     if (!S.loadedOnce) { S.loadedOnce = true; load({ layout: true }); }
   }
   function hide() {
@@ -1072,5 +1108,13 @@
     if (S.graph) S.graph.pauseAnimation();
   }
 
-  window.GraphView = { init, show, hide, setSessions, goHome, focusFolder, openRoots: openRootsDialog, _state: S };
+  // 2D 表示が読む今のデータとフィルター(書き換えずに読むだけにする)
+  const snapshot = () => ({ raw: S.raw, sessions: S.sessions, f: S.f, mode: S.mode, focus: S.focus, depth: S.depth[S.mode], roots: S.roots });
+
+  window.GraphView = {
+    init, show, hide, setSessions, goHome, focusFolder, openRoots: openRootsDialog, _state: S,
+    setView, view: () => S.view, onChange: (fn) => subs.push(fn), snapshot,
+    catColors: CAT_COLORS, statusJa: STATUS_JA,
+    launch: (p) => S.opts.onLaunch(p), openSession: (id) => S.opts.onOpenSession(id), mascotSVG: (st) => S.opts.mascotSVG(st),
+  };
 }());
