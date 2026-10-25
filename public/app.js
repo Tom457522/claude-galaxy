@@ -1117,6 +1117,7 @@ function paletteItems() {
     mascotURL: mascotImageURL,
     mascotSVG: mascot,
   });
+  window.Home2DView.init();
   await window.AppsView.init({
     showTab: () => setTab('apps'),
     onLaunchCommand: launchCommandApp,
