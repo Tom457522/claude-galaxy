@@ -119,4 +119,10 @@ test('1 件のセッションの events が読めなくても、ほかのセッ�
   assert.deepStrictEqual([byId.ok.synced, byId.ok.calls], [true, 1]);
   assert.strictEqual(byId.gone.synced, false);
   assert.ok(events.some((p) => p.includes('/ok/')));
+
+  // 読めなかったセッションは、更新されるまで読み直さない(理由は出し続ける)
+  const n = events.length;
+  const st2 = await cloud.refresh({ force: true });
+  assert.strictEqual(events.length, n);
+  assert.match(st2.error, /gone/);
 });

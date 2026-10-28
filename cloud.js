@@ -117,9 +117,9 @@ function createCloudUsage({ readCreds = readCredentials, fetchImpl = (...a) => f
 
     // 更新されたセッションの events を追記分だけ読む(新しく更新されたものから)
     let pages = 0;
-    const todo = Object.values(state.sessions).filter((s) => !s.archived && s.syncedAt !== s.updated)
+    // 読めなかったセッションは、次に更新されるまで読み直さない(ページの上限を使い切って、ほかが読めなくなるのを防ぐ)
+    const todo = Object.values(state.sessions).filter((s) => !s.archived && s.syncedAt !== s.updated && s.failedAt !== s.updated)
       .sort((a, b) => String(b.updated).localeCompare(String(a.updated)));
-    const failed = [];
     for (const s of todo) {
       let done = false;
       try {
@@ -135,12 +135,17 @@ function createCloudUsage({ readCreds = readCredentials, fetchImpl = (...a) => f
         // そのセッションだけ読めない(消えた・権限が無いなど 4xx)なら、ほかのセッションは読み進める。
         // ログイン切れ・接続できない・混雑(429)・サーバーの不調(5xx)のときは止める
         if (!(e.status >= 400 && e.status < 500) || e.status === 429) throw e;
-        failed.push(`${s.title || s.id}: ${e.message}`);
+        s.failedAt = s.updated;
+        s.failed = e.message;
         continue;
       }
+      s.failedAt = '';
+      s.failed = '';
       if (done) s.syncedAt = s.updated;
       if (pages >= MAX_PAGES) break;
     }
+    const failed = Object.values(state.sessions).filter((s) => !s.archived && s.failedAt && s.failedAt === s.updated)
+      .map((s) => `${s.title || s.id}: ${s.failed}`);
     return { more: pages >= MAX_PAGES, failed }; // more: まだ読み残しがある
   }
 
