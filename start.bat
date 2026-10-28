@@ -19,6 +19,17 @@ if not exist node_modules (
   )
 )
 
-start "" cmd /c "timeout /t 2 >nul & start http://localhost:3456"
+set GPORT=%PORT%
+if not defined GPORT set GPORT=3456
+
+rem 画面なしで動いている(autostart.ps1 で自動起動した)ときは、ブラウザを開くだけにする
+node -e "require('net').connect(%GPORT%,'127.0.0.1',()=>process.exit(0)).on('error',()=>process.exit(1))"
+if not errorlevel 1 (
+  echo すでに起動しています。ブラウザを開きます。
+  start http://localhost:%GPORT%
+  exit /b 0
+)
+
+start "" cmd /c "timeout /t 2 >nul & start http://localhost:%GPORT%"
 call npm start
 pause
