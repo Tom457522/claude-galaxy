@@ -98,3 +98,31 @@ test('ログイン情報が無いときは読まずに知らせる', async () =>
   const st = await cloud.refresh({ force: true });
   assert.match(st.error, /ログイン情報/);
 });
+
+test('1 件のセッションの events が読めなくても、ほかのセッションは読み進める', async () => {
+  const sess = (id, updated) => ({ id, title: id, updated_at: updated, created_at: T(8), session_context: {}, external_metadata: {} });
+  const events = [];
+  const fetchImpl = async (url) => {
+    const u = new URL(url);
+    if (u.pathname === '/api/oauth/profile') return { ok: true, status: 200, json: async () => ({ organization: { uuid: 'org-1' } }) };
+    if (u.pathname === '/v1/sessions') {
+      return { ok: true, status: 200, json: async () => ({ data: [sess('gone', '2026-10-23T12:00:00Z'), sess('ok', '2026-10-23T11:00:00Z')], has_more: false }) };
+    }
+    events.push(u.pathname);
+    if (u.pathname.includes('/gone/')) return { ok: false, status: 404, json: async () => ({}) };
+    return { ok: true, status: 200, json: async () => ({ data: [result('k1', 9, 3)], has_more: false, last_id: 'k1' }) };
+  };
+  const cloud = createCloudUsage({ readCreds: () => ({ accessToken: 'tok' }), fetchImpl });
+  const st = await cloud.refresh({ force: true });
+  assert.match(st.error, /1 件のセッション.*gone.*404/);
+  const byId = Object.fromEntries(cloud.sessions().map((s) => [s.id, s]));
+  assert.deepStrictEqual([byId.ok.synced, byId.ok.calls], [true, 1]);
+  assert.strictEqual(byId.gone.synced, false);
+  assert.ok(events.some((p) => p.includes('/ok/')));
+
+  // 読めなかったセッションは、更新されるまで読み直さない(理由は出し続ける)
+  const n = events.length;
+  const st2 = await cloud.refresh({ force: true });
+  assert.strictEqual(events.length, n);
+  assert.match(st2.error, /gone/);
+});

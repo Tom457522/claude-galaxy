@@ -58,11 +58,15 @@ function createCloudUsage({ readCreds = readCredentials, fetchImpl = (...a) => f
     if (state.org) headers['x-organization-uuid'] = state.org;
     const res = await fetchImpl(url, { headers, signal: AbortSignal.timeout(30000) });
     if (res.status === 401) throw new Error('ログイン情報の期限が切れています。Claude Code を一度使うと更新されます');
-    if (!res.ok) throw new Error(`Anthropic の応答が HTTP ${res.status} でした`);
+    if (!res.ok) throw Object.assign(new Error(`Anthropic の応答が HTTP ${res.status} でした`), { status: res.status });
     return res.json();
   }
 
   async function sync() {
+    try { return await syncAll(); } finally { save(); } // 途中で失敗しても、読めたところまでは残す
+  }
+
+  async function syncAll() {
     const cred = readCreds();
     if (!cred) throw new Error('Claude Code のログイン情報が見つかりません(claude でログインすると読めるようになります)');
     const tok = cred.accessToken;
@@ -113,23 +117,36 @@ function createCloudUsage({ readCreds = readCredentials, fetchImpl = (...a) => f
 
     // 更新されたセッションの events を追記分だけ読む(新しく更新されたものから)
     let pages = 0;
-    const todo = Object.values(state.sessions).filter((s) => !s.archived && s.syncedAt !== s.updated)
+    // 読めなかったセッションは、次に更新されるまで読み直さない(ページの上限を使い切って、ほかが読めなくなるのを防ぐ)
+    const todo = Object.values(state.sessions).filter((s) => !s.archived && s.syncedAt !== s.updated && s.failedAt !== s.updated)
       .sort((a, b) => String(b.updated).localeCompare(String(a.updated)));
     for (const s of todo) {
       let done = false;
-      while (pages < MAX_PAGES) {
-        pages += 1;
-        const q = `limit=${PAGE}${s.lastEventId ? `&after_id=${encodeURIComponent(s.lastEventId)}` : ''}`;
-        const j = await get(`${API}/v1/sessions/${encodeURIComponent(s.id)}/events?${q}`, tok, 'ccr-byoc-2025-07-29');
-        for (const e of j.data || []) if (e && e.type === 'result') addResult(s, e);
-        if (j.last_id && (j.data || []).length) s.lastEventId = j.last_id;
-        if (!j.has_more) { done = true; break; }
+      try {
+        while (pages < MAX_PAGES) {
+          pages += 1;
+          const q = `limit=${PAGE}${s.lastEventId ? `&after_id=${encodeURIComponent(s.lastEventId)}` : ''}`;
+          const j = await get(`${API}/v1/sessions/${encodeURIComponent(s.id)}/events?${q}`, tok, 'ccr-byoc-2025-07-29');
+          for (const e of j.data || []) if (e && e.type === 'result') addResult(s, e);
+          if (j.last_id && (j.data || []).length) s.lastEventId = j.last_id;
+          if (!j.has_more) { done = true; break; }
+        }
+      } catch (e) {
+        // そのセッションだけ読めない(消えた・権限が無いなど 4xx)なら、ほかのセッションは読み進める。
+        // ログイン切れ・接続できない・混雑(429)・サーバーの不調(5xx)のときは止める
+        if (!(e.status >= 400 && e.status < 500) || e.status === 429) throw e;
+        s.failedAt = s.updated;
+        s.failed = e.message;
+        continue;
       }
+      s.failedAt = '';
+      s.failed = '';
       if (done) s.syncedAt = s.updated;
       if (pages >= MAX_PAGES) break;
     }
-    save();
-    return pages >= MAX_PAGES; // まだ読み残しがある
+    const failed = Object.values(state.sessions).filter((s) => !s.archived && s.failedAt && s.failedAt === s.updated)
+      .map((s) => `${s.title || s.id}: ${s.failed}`);
+    return { more: pages >= MAX_PAGES, failed }; // more: まだ読み残しがある
   }
 
   // result 行 1 件を、前の result との差(モデルごと)として turns に足す。turns[id] = [時刻, モデル, input, output, cacheWrite, cacheRead, USD]
@@ -159,8 +176,9 @@ function createCloudUsage({ readCreds = readCredentials, fetchImpl = (...a) => f
     inflight = (async () => {
       let more = false;
       try {
-        more = await sync();
-        error = '';
+        const r = await sync();
+        more = r.more;
+        error = r.failed.length ? `${r.failed.length} 件のセッションの記録を読めませんでした(${r.failed[0]})` : '';
         fetchedAt = now();
       } catch (e) {
         error = e.name === 'TimeoutError' ? 'Anthropic に接続できませんでした(タイムアウト)' : e.message;
