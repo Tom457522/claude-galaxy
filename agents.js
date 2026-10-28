@@ -112,7 +112,11 @@ function createAgents({ sessions, jobs, bus, maxDepth, maxAgentJobs }) {
         return { canceled: jobs.cancel(j.id) };
       }
       case 'memory_write':
-        return bus.memWrite(a.key, a.value, { tags: a.tags, author: `${myName} (${from})` });
+        return bus.memWrite(a.key, a.value, {
+          tags: a.tags,
+          author: `${myName} (${from})`,
+          source: { kind: sessions.has(from) ? 'session' : 'job', id: from },
+        });
       case 'memory_read':
         return bus.memRead(String(a.key || '')) || { error: 'そのキーはありません' };
       case 'memory_search':

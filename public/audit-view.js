@@ -26,6 +26,7 @@
     'job-start': { label: 'ジョブ開始', icon: '◷' },
     'job-end': { label: 'ジョブ終了', icon: '✓' },
     dispatch: { label: '窓口', icon: '➤' },
+    safety: { label: '止められた操作', icon: '🛡' },
     'worktree-remove': { label: 'worktree 削除', icon: '⑂' },
     'worktree-commit': { label: 'コミット', icon: '⑂' },
     'worktree-merge': { label: '取り込み', icon: '⑂' },

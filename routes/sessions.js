@@ -4,6 +4,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { normalizePatterns } = require('../safety');
 
 module.exports = function routes(ctx) {
   const {
@@ -116,6 +117,14 @@ module.exports = function routes(ctx) {
     if (typeof b.planPaceGuard === 'boolean') settings.planPaceGuard = b.planPaceGuard;
     if (typeof b.budgetIncludeCloud === 'boolean') settings.budgetIncludeCloud = b.budgetIncludeCloud;
     if (typeof b.notifyDesktop === 'boolean') settings.notifyDesktop = b.notifyDesktop;
+    if (typeof b.approvalGate === 'boolean' && b.approvalGate !== settings.approvalGate) {
+      settings.approvalGate = b.approvalGate;
+      ctx.writeHookSettings(); // ゲートの hook を付け外しする(次に起動するセッション・ジョブから)
+    }
+    if (b.approvalPatterns !== undefined) {
+      try { settings.approvalPatterns = normalizePatterns(b.approvalPatterns); } catch (e) { return res.status(400).json({ error: e.message }); }
+    }
+    if (typeof b.collectSafetyEvents === 'boolean') settings.collectSafetyEvents = b.collectSafetyEvents;
     if (typeof b.dispatchModel === 'string' && /^[A-Za-z0-9._-]{0,40}$/.test(b.dispatchModel.trim())) settings.dispatchModel = b.dispatchModel.trim();
     jobs.pump();
     ctx.budget.check();

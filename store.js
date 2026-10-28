@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { DEFAULT_APPROVAL_PATTERNS } = require('./safety');
 const os = require('os');
 
 const DATA_DIR = path.join(os.homedir(), '.claude-galaxy');
@@ -105,6 +106,9 @@ const SETTINGS_DEFAULTS = {
   planLimitSessionPct: 0, planLimitWeeklyPct: 0, planPaceGuard: false, planPaceMargin: 10,
   planMonthlyUsd: 0, // 月額の上書き(0 はプランから自動)
   notifyDesktop: true, // 承認待ち・ジョブの完了・予算をデスクトップに通知する(画面側で使う)
+  // 承認ゲート: approvalPatterns に一致するコマンド(強制 push・公開・外部送信など)は、許可済みでも受信箱の承認を待つ
+  approvalGate: false, approvalPatterns: DEFAULT_APPROVAL_PATTERNS,
+  collectSafetyEvents: false, // Claude Code の OpenTelemetry から「止められた操作」(safety_event)を監査ログに集める
 };
 
 function loadSettings() {

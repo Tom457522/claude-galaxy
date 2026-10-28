@@ -102,7 +102,7 @@ const TOOLS = [
   },
   {
     name: 'memory_write',
-    description: '共有メモリにキーと値を書く(同じキーは上書き)。決めたこと・調べた結果・作業の引き継ぎなど、ほかのエージェントにも見せたい知識を残す。キーは "project/topic" のように / で区切ると探しやすい。',
+    description: '共有メモリにキーと値を書く(同じキーは上書き)。決めたこと・調べた結果・作業の引き継ぎなど、ほかのエージェントにも見せたい知識を残す。キーは "project/topic" のように / で区切ると探しやすい。書いたセッション/ジョブの ID が source として自動で残るので、要約だけでなく根拠の元記録(ジョブの結果・画面ログ)も後からたどれる。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -121,7 +121,7 @@ const TOOLS = [
   },
   {
     name: 'memory_search',
-    description: '共有メモリを語で検索する(キー・値・タグの部分一致。空白区切りの語をすべて含むもの)。query を空にすると新しい順に一覧。prefix でキーの先頭を絞れる。',
+    description: '共有メモリを語で検索する(キー・値・タグの部分一致。空白区切りの語をすべて含むもの)。query を空にすると新しい順に一覧。prefix でキーの先頭を絞れる。結果の source は書いたセッション/ジョブで、要約だけでは足りないときは get_job(ジョブの場合)で元の結果を確かめる。',
     inputSchema: {
       type: 'object',
       properties: { query: { type: 'string' }, prefix: { type: 'string' } },

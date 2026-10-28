@@ -3,9 +3,11 @@
 // Claude Code の hook から呼ばれ、イベントを Claude Galaxy サーバーへ中継する。
 // - stdout には何も出さない(UserPromptSubmit 等では stdout が Claude の文脈に入るため)
 //   例外は PermissionRequest で、アプリの受信箱で許可/拒否されたときだけ決定を JSON で返す
+//   もう 1 つの例外は PreToolUseGate(承認ゲート)で、危ないコマンドについて受信箱で決まった許可/拒否を返す
 // - 失敗しても常に exit 0(Claude Code の動作を邪魔しない。PermissionRequest なら通常の確認ダイアログになる)
 // - 送るのは状態表示に必要な最小限の項目だけ(ファイル内容は送らない。
-//   PermissionRequest だけは判断材料として、コマンド文字列やファイルパスを送る)
+//   PermissionRequest だけは判断材料として、コマンド文字列やファイルパスを送る。
+//   承認ゲートがオンのときは、Bash / PowerShell のコマンド文字列も一致判定のために送る)
 
 const http = require('http');
 
@@ -97,9 +99,40 @@ function post(pathname, payload, timeoutMs, onBody) {
   req.end(body);
 }
 
+// 承認ゲート: Bash / PowerShell のコマンドをサーバーに見せ、危ないものなら受信箱の決定を待つ。
+// 許可済みのツール(allowedTools・dontAsk)でも PreToolUse は呼ばれるので、無人のジョブにも効く
+function gate(p) {
+  const ti = p.tool_input && typeof p.tool_input === 'object' ? p.tool_input : {};
+  if (typeof ti.command !== 'string' || !ti.command) process.exit(0);
+  // 承認ゲートがオンのときだけ登録される hook。判断に要る項目だけを送る(会話の内容などは送らない)
+  const payload = {
+    hook_event_name: 'PreToolUse',
+    tool_name: p.tool_name,
+    agent_id: p.agent_id,
+    agent_type: p.agent_type,
+    cwd: clip(p.cwd, 1000),
+    permission_mode: clip(p.permission_mode, 40),
+    input: { command: ti.command.slice(0, 4000), description: clip(ti.description, 500) },
+  };
+  post('/api/gate', payload, 0, (status, data) => {
+    if (status !== 200) return false;
+    let d;
+    try { d = JSON.parse(data); } catch (_) { return false; }
+    if (!d || (d.decision !== 'allow' && d.decision !== 'deny' && d.decision !== 'ask')) return false; // 決定なし → 通常どおり
+    const out = { hookEventName: 'PreToolUse', permissionDecision: d.decision };
+    if (typeof d.reason === 'string' && d.reason) out.permissionDecisionReason = d.reason.slice(0, 500);
+    process.stdout.write(JSON.stringify({ hookSpecificOutput: out }), () => process.exit(0));
+    return true;
+  });
+}
+
 function send(p) {
   if (sent) return;
   sent = true;
+  if (EVENT === 'PreToolUseGate') {
+    gate(p);
+    return;
+  }
   if (EVENT !== 'PermissionRequest') {
     post('/api/hook', slim(p), 1500, () => false);
     return;

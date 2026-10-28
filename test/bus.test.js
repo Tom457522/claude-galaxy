@@ -32,3 +32,14 @@ test('共有メモリの読み書きと検索', () => {
   assert.strictEqual(bus.memRead('proj/todo'), null);
   assert.throws(() => bus.memWrite('  ', 'x'), /キー/);
 });
+
+test('共有メモリに書いたエージェント(source)を残す', () => {
+  const bus = createBus({ onChange() {} });
+  bus.memWrite('a/1', '要約', { author: 'x (j1)', source: { kind: 'job', id: 'j1' } });
+  bus.memWrite('a/2', '古い形式', { author: 'y' });
+  bus.memWrite('a/3', '不正な source', { source: { kind: 'other', id: 'z' } });
+  assert.deepStrictEqual(bus.memRead('a/1').source, { kind: 'job', id: 'j1' });
+  assert.deepStrictEqual(bus.memSearch('要約')[0].source, { kind: 'job', id: 'j1' });
+  assert.strictEqual(bus.memRead('a/2').source, undefined); // source なしでも読める
+  assert.strictEqual(bus.memRead('a/3').source, undefined);
+});
