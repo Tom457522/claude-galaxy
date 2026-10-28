@@ -4,6 +4,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { matchApproval, parseSafetyEvents, describeSafetyEvent } = require('../safety');
 
 module.exports = function routes(ctx) {
   const {
@@ -53,6 +54,11 @@ module.exports = function routes(ctx) {
       return res.json({ behavior: 'ask' });
     }
     if (s) trackTranscript(s, p);
+    queuePermission(agentId, s, p, res, { behavior: 'ask' });
+  });
+
+  // 受信箱に積んで、決まるまで res を保留する。時間切れのときは onTimeout を返す
+  function queuePermission(agentId, s, p, res, onTimeout, extra = {}) {
     const id = nextPermId();
     const now = Date.now();
     const x = {
@@ -68,8 +74,9 @@ module.exports = function routes(ctx) {
       suggestions: Array.isArray(p.permission_suggestions) ? p.permission_suggestions.filter((u) => u && typeof u === 'object') : [],
       res,
       timer: null,
+      ...extra,
     };
-    x.timer = setTimeout(() => resolvePermission(id, { behavior: 'ask' }, 'timeout'), PERMISSION_WAIT * 1000);
+    x.timer = setTimeout(() => resolvePermission(id, onTimeout, 'timeout'), PERMISSION_WAIT * 1000);
     // hook 側が先に終わった(Claude 側で中断された等)ら片付ける
     res.on('close', () => { if (permissions.has(id)) resolvePermission(id, { behavior: 'ask' }); });
     permissions.set(id, x);
@@ -78,6 +85,49 @@ module.exports = function routes(ctx) {
       setStatus(s, 'waiting', `${x.tool} の許可待ち`);
       emit(s);
     }
+  }
+
+  // hook.js(PreToolUseGate)からの承認ゲート。危ないコマンドだけ受信箱で承認を待つ。
+  // 許可済みのツールでも呼ばれるので、無人のジョブの強制 push・公開・外部送信もここで止まる。
+  // 承認されなかったとき(拒否・時間切れ・受信箱オフ・中断)は必ず拒否にする
+  app.post('/api/gate', (req, res) => {
+    const agentId = hookAuth(req);
+    if (!agentId) return res.status(401).end();
+    const p = req.body?.payload;
+    if (!settings.approvalGate || !p || typeof p !== 'object') return res.json({});
+    const command = typeof p.input?.command === 'string' ? p.input.command : '';
+    const pattern = matchApproval(command, settings.approvalPatterns);
+    if (!pattern) return res.json({});
+    const s = sessions.get(agentId);
+    const isJob = !s && jobs.isRunning(agentId);
+    audit.log({ agent: agentId, agentName: agentName(agentId), kind: 'safety', tool: p.tool_name || 'Bash', target: command.slice(0, 300), detail: `承認ゲート: ${pattern}` });
+    if ((!isJob && (!s || !s.alive)) || !settings.permissionInbox) {
+      return res.json({ decision: 'deny', reason: '承認ゲート: 受信箱がオフのため、この操作は実行できません(Claude Galaxy の設定)' });
+    }
+    // resolvePermission は { behavior } を返すので、PreToolUse の形に直して返す
+    const shim = {
+      get writableEnded() { return res.writableEnded; },
+      on: (...a) => res.on(...a),
+      json(d) {
+        if (d.behavior === 'allow') return res.json({ decision: 'allow' });
+        return res.json({ decision: 'deny', reason: d.message || '承認ゲート: 受信箱で承認されなかったため実行しません' });
+      },
+    };
+    queuePermission(agentId, s, { ...p, permission_suggestions: [] }, shim,
+      { behavior: 'deny', message: '承認ゲート: 承認の待ち時間を過ぎたため実行しません' },
+      { gate: pattern });
+  });
+
+  // 子の claude の OpenTelemetry(OTLP/HTTP JSON のログ)。safety_event だけを監査ログに残す
+  app.post('/otel/v1/logs', (req, res) => {
+    const agentId = hookAuth(req);
+    if (!agentId) return res.status(401).end();
+    if (settings.collectSafetyEvents) {
+      for (const e of parseSafetyEvents(req.body).slice(0, 100)) {
+        audit.log({ agent: agentId, agentName: agentName(agentId), kind: 'safety', ...describeSafetyEvent(e) });
+      }
+    }
+    res.json({});
   });
 
   app.get('/api/events', (req, res) => {

@@ -102,6 +102,23 @@ const BUS_AUTO_ALLOW = [
 ].map((t) => `mcp__galaxy__${t}`);
 const { fwd } = cmdline;
 
+// 「止められた操作」(safety_event)を集めるときだけ、子の claude に OpenTelemetry のログを本体へ送らせる。
+// 送り先は 127.0.0.1 のこのサーバーで、エージェントごとのトークンで呼び出し元を決める
+function telemetryEnv(id) {
+  if (!settings.collectSafetyEvents) return {};
+  return {
+    CLAUDE_CODE_ENABLE_TELEMETRY: '1',
+    OTEL_LOGS_EXPORTER: 'otlp',
+    // ユーザーの環境の OTEL_* でメトリクス・トレースが別の送り先へ出ないようにする
+    OTEL_METRICS_EXPORTER: 'none',
+    OTEL_TRACES_EXPORTER: 'none',
+    OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json',
+    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: `http://127.0.0.1:${PORT}/otel/v1/logs`,
+    OTEL_EXPORTER_OTLP_LOGS_HEADERS: `X-Galaxy-Token=${tokenFor(id)}`,
+    OTEL_LOGS_EXPORT_INTERVAL: '2000',
+  };
+}
+
 // このアプリで起動した claude にだけ渡す(--settings)。ユーザーの settings.json は書き換えない。
 function writeHookSettings() {
   const hooks = {};
@@ -114,6 +131,14 @@ function writeHookSettings() {
   hooks.PermissionRequest = [{
     hooks: [{ type: 'command', command: `node "${fwd(HOOK_JS)}" PermissionRequest`, timeout: PERMISSION_WAIT + 30 }],
   }];
+  // 承認ゲート(同期)。危ないコマンドなら受信箱で決まるまで待つ。
+  // オフのときは登録しない(すべてのコマンド文字列を本体へ送らないため)。設定を変えたら書き直す
+  if (settings.approvalGate) {
+    hooks.PreToolUse.push({
+      matcher: 'Bash|PowerShell',
+      hooks: [{ type: 'command', command: `node "${fwd(HOOK_JS)}" PreToolUseGate`, timeout: PERMISSION_WAIT + 30 }],
+    });
+  }
   fs.mkdirSync(TMP_DIR, { recursive: true });
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ hooks, permissions: { allow: BUS_AUTO_ALLOW } }, null, 2));
 }
@@ -577,6 +602,7 @@ function spawnSession(session, { resume = false } = {}) {
       GALAXY_SESSION: session.id,
       GALAXY_PORT: String(PORT),
       GALAXY_TOKEN: tokenFor(session.id),
+      ...telemetryEnv(session.id),
     },
   });
 
@@ -727,6 +753,7 @@ const permInfo = (x) => ({
   mcpServer: x.mcpServer,
   agentType: x.agentType,
   input: x.input,
+  gate: x.gate || '', // 承認ゲートで止めたときは一致したパターン
   // 「今後も許可」できるのは、許可ルールの追加提案があるときだけ
   rules: x.suggestions.flatMap((u) => (u.type === 'addRules' && u.behavior === 'allow' && Array.isArray(u.rules)
     ? u.rules.map((r) => ({ tool: r.toolName, rule: r.ruleContent || '', destination: u.destination }))
@@ -801,7 +828,7 @@ const jobs = createJobManager({
   jobCommand: () => JOB_COMMAND,
   checkCommand: (cmd, cwd) => assertCommandExists(cmd, SHELL, cwd),
   buildCommand: buildJobCommand,
-  envFor: (job) => ({ ...process.env, GALAXY_SESSION: job.id, GALAXY_PORT: String(PORT), GALAXY_TOKEN: tokenFor(job.id) }),
+  envFor: (job) => ({ ...process.env, GALAXY_SESSION: job.id, GALAXY_PORT: String(PORT), GALAXY_TOKEN: tokenFor(job.id), ...telemetryEnv(job.id) }),
   getMaxConcurrent: () => settings.maxConcurrentJobs,
   blockReason: () => budget.blockReason() || plan.blockReason(),
   onChange: (j) => broadcast('job', j),
@@ -917,7 +944,7 @@ const ctx = {
   agentName, agentList, resolveAgent, typeInto, busCall, hookAuth, runClaude, buildGraph,
   claudeMcpServers, claudeExtensions, targetOf,
   budget, plan, cloud, usageScan, diagnose, search, onDiagHook, waitDiagHook, tokenFor, revokeToken, writeMemoryPrompt,
-  HOOK_JS, MCP_JS, TMP_DIR, SETTINGS_FILE, PORT,
+  writeHookSettings, HOOK_JS, MCP_JS, TMP_DIR, SETTINGS_FILE, PORT,
   DEFAULT_COMMAND, JOB_COMMAND, SHELL, IS_WIN, PERMISSION_WAIT, APPS_PORT, ROOT_DIR: __dirname,
 };
 for (const r of ['sessions', 'jobs', 'board', 'ops', 'misc', 'agent-api', 'system']) require(`./routes/${r}`)(ctx);

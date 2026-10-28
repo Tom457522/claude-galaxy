@@ -77,7 +77,9 @@ function createBus({ onChange }) {
 
     clearMessages() { messages = []; save(); },
 
-    memWrite(key, value, { tags = [], author = '' } = {}) {
+    // source: 書いたエージェント({ kind: 'session' | 'job', id })。要約の元になった記録(ジョブの transcript・
+    //   セッションの画面ログ)を後から search で引けるように残す。古いデータにはない
+    memWrite(key, value, { tags = [], author = '', source = null } = {}) {
       const k = str(key, 200).trim();
       if (!k) throw new Error('キーが空です');
       if (!memory[k] && Object.keys(memory).length >= MAX_MEMORY) throw new Error(`共有メモリは ${MAX_MEMORY} 件までです`);
@@ -86,6 +88,8 @@ function createBus({ onChange }) {
         value: str(String(value ?? ''), MAX_VALUE),
         tags: (Array.isArray(tags) ? tags : []).map((t) => str(String(t), 40).trim()).filter(Boolean).slice(0, 20),
         author,
+        ...(source && (source.kind === 'session' || source.kind === 'job') && typeof source.id === 'string'
+          ? { source: { kind: source.kind, id: str(source.id, 40) } } : {}),
         createdAt: prev ? prev.createdAt : Date.now(),
         updatedAt: Date.now(),
       };

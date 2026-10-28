@@ -43,6 +43,9 @@
     chk('#st-cloud', st.budgetIncludeCloud !== false);
     chk('#st-notify', st.notifyDesktop !== false);
     chk('#st-inbox', st.permissionInbox);
+    chk('#st-gate', st.approvalGate);
+    set('#st-gate-pats', (st.approvalPatterns || []).join('\n'));
+    chk('#st-safety', st.collectSafetyEvents);
     set('#st-max', String(st.maxConcurrentJobs || 2));
     set('#st-dmodel', st.dispatchModel || 'haiku');
     set('#st-wtdir', st.worktreeDir || '');
@@ -85,6 +88,9 @@
     const bool = (id, key) => $(id).addEventListener('change', (e) => put({ [key]: e.target.checked }));
     bool('#st-notify', 'notifyDesktop');
     bool('#st-inbox', 'permissionInbox');
+    bool('#st-gate', 'approvalGate');
+    bool('#st-safety', 'collectSafetyEvents');
+    $('#st-gate-pats').addEventListener('change', (e) => put({ approvalPatterns: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean) }));
     bool('#st-pl-pace', 'planPaceGuard');
     bool('#st-cloud', 'budgetIncludeCloud');
     bool('#st-bus', 'busEnabled');

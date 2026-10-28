@@ -606,6 +606,7 @@ function permCard(x, { withSession }) {
     '<div class="perm-head">' +
       `<b class="perm-tool">${esc(tool)}</b>` +
       (x.agentType ? `<span class="perm-agent">${esc(x.agentType)}</span>` : '') +
+      (x.gate ? `<span class="perm-agent" title="一致したパターン: ${esc(x.gate)}">⚠ 承認ゲート</span>` : '') +
       (withSession ? `<span class="perm-sess" data-focus="${esc(x.sessionId)}">${isJob ? '◷ ' : ''}${esc(p ? p.info.name : (x.agentName || x.sessionId))}</span>` : '') +
       `<span class="perm-time" data-exp="${x.expiresAt}"></span>` +
     '</div>' +
@@ -615,12 +616,12 @@ function permCard(x, { withSession }) {
       '<button class="btn primary" data-act="allow">許可</button>' +
       (rules ? `<button class="btn" data-act="always" title="次のルールを追加して許可:\n${esc(rules)}">今後も許可</button>` : '') +
       '<button class="btn danger" data-act="deny">拒否</button>' +
-      (isJob ? '' : '<button class="btn" data-act="ask" title="この確認をターミナルの通常のダイアログで答えます">ターミナルで</button>') +
+      (isJob || x.gate ? '' : '<button class="btn" data-act="ask" title="この確認をターミナルの通常のダイアログで答えます">ターミナルで</button>') +
     '</div></div>';
 }
 
 // 同じ種類の確認(ツール + 提案ルール)をまとめて許可できるようにする
-const permKind = (x) => `${x.tool}|${(x.rules && x.rules[0] && x.rules[0].rule) || ''}`;
+const permKind = (x) => `${x.tool}|${(x.rules && x.rules[0] && x.rules[0].rule) || ''}|${x.gate || ''}`;
 let permSel = 0; // キーボードで選んでいる確認
 
 function renderInbox() {

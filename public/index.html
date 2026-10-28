@@ -305,7 +305,7 @@
             <select id="au-kind">
               <option value="">すべて</option><option value="tool">ツール</option><option value="permission">権限</option>
               <option value="session-start">起動</option><option value="session-exit">終了</option>
-              <option value="job-start">ジョブ開始</option><option value="job-end">ジョブ終了</option><option value="dispatch">窓口</option>
+              <option value="job-start">ジョブ開始</option><option value="job-end">ジョブ終了</option><option value="dispatch">窓口</option><option value="safety">止められた操作</option>
               <option value="worktree-merge">取り込み</option><option value="worktree-push">push</option>
             </select>
             <input id="au-agent" type="text" placeholder="エージェント ID(s1 / j3)" autocomplete="off">
@@ -392,6 +392,8 @@
             <label class="g-chk"><input type="checkbox" id="st-notify"> デスクトップ通知(承認待ち・ジョブの完了・予算・あなた宛てのメッセージ)</label>
             <div class="set-row"><button id="st-notify-perm" class="btn">ブラウザに通知を許可する</button><button id="st-notify-test" class="btn">通知を試す</button><span id="st-notify-state" class="g-note"></span></div>
             <label class="g-chk"><input type="checkbox" id="st-inbox"> 権限確認を受信箱で答える(オフならターミナルのダイアログだけ)</label>
+            <label class="g-chk"><input type="checkbox" id="st-gate"> 承認ゲート: 危ないコマンドは許可済みでも受信箱の承認を待つ(無人のジョブにも効く。承認がなければ実行しない)</label>
+            <label class="set-inline set-wide">承認を求めるコマンド(正規表現・1 行に 1 つ。通常の git push は含めていません)<textarea id="st-gate-pats" rows="5" spellcheck="false"></textarea></label>
           </div>
 
           <div class="set-sec">
@@ -407,6 +409,7 @@
           <div class="set-sec">
             <h3>記録</h3>
             <label class="g-chk"><input type="checkbox" id="st-audit"> 監査ログを残す</label>
+            <label class="g-chk"><input type="checkbox" id="st-safety"> 「止められた操作」を集める(Claude Code の OpenTelemetry の safety_event。次に起動したセッション・ジョブから)</label>
             <label class="set-inline">保存する日数 <select id="st-audit-days"><option value="7">7 日</option><option value="30">30 日</option><option value="90">90 日</option><option value="365">365 日</option></select></label>
           </div>
 
