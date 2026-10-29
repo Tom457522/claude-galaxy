@@ -1,0 +1,5 @@
+' Run Claude Galaxy without a window (called by the "Claude Galaxy" task registered by autostart.ps1)
+Set fso = CreateObject("Scripting.FileSystemObject")
+Set sh = CreateObject("WScript.Shell")
+sh.CurrentDirectory = fso.GetParentFolderName(WScript.ScriptFullName)
+WScript.Quit sh.Run("node background.js", 0, True)

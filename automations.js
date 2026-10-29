@@ -1,6 +1,6 @@
 'use strict';
 // オートメーション: きっかけがあったらジョブを登録する。保存先: ~/.claude-galaxy/automations.json
-//   kind 'cron'  : cron 式の時刻に(ローカル時刻。サーバーが止まっていた間の分は実行しない)
+//   kind 'cron'  : cron 式の時刻に(ローカル時刻。サーバー停止やスリープで逃した分は、次に動いたとき 1 回だけ実行する)
 //   kind 'files' : フォルダ内のファイルが変わったら(まとめて debounce 秒後に 1 回)
 //   kind 'git'   : リポジトリに新しいコミットができたら(HEAD を定期的に確認)
 //   kind 'after' : 別のオートメーションのジョブが終わったら(ジョブのつなぎ。{{prevResult}} などで結果を渡せる)
@@ -65,6 +65,9 @@ function createAutomations(deps) {
       template: input.template && typeof input.template === 'object' ? input.template : (prev.template || {}),
       createdAt: prev.createdAt || Date.now(),
       lastFiredAt: prev.lastFiredAt || null,
+      // 予定時刻を確かめ終えた時刻(取りこぼしの判定の起点)。新規・有効化・cron 式の変更では今から数える
+      lastCheckedAt: !prev.id || (input.enabled && !prev.enabled) || str(input.cron, 100) !== prev.cron
+        ? Date.now() : (prev.lastCheckedAt || prev.lastFiredAt || prev.createdAt || Date.now()),
       lastJobId: prev.lastJobId || null,
       lastSkipped: prev.lastSkipped || null,
     };
@@ -85,9 +88,10 @@ function createAutomations(deps) {
     return text.replace(/\{\{\s*(\w+)\s*\}\}/g, (m, k) => (vars[k] !== undefined ? String(vars[k]) : m));
   }
 
-  // ジョブを登録する。manual: 「今すぐ実行」
-  function fire(a, vars = {}, { manual = false, chainDepth = 0 } = {}) {
+  // ジョブを登録する。manual: 「今すぐ実行」/ scheduled: cron の予定を確かめた時刻(取りこぼし分を含む)
+  function fire(a, vars = {}, { manual = false, scheduled = 0, chainDepth = 0 } = {}) {
     const r = rt.get(a.id) || {};
+    if (scheduled) a.lastCheckedAt = scheduled; // 登録に失敗しても、同じ予定で何度も試さない
     if (!manual && a.skipIfRunning && a.lastJobId && deps.isActive(a.lastJobId)) {
       a.lastSkipped = Date.now();
       save();
@@ -192,18 +196,31 @@ function createAutomations(deps) {
     fire(a, { commit: h, commitMessage: msg });
   }
 
-  // cron は 20 秒ごとに確認し、同じ分には 1 回だけ実行する
+  // 前回確かめてから今の分より前に予定時刻があった(サーバー停止・スリープで逃した)か
+  function missed(a, r, d) {
+    const minuteStart = new Date(d.getTime());
+    minuteStart.setSeconds(0, 0);
+    const n = cron.next(r.cron, new Date(a.lastCheckedAt || a.lastFiredAt || a.createdAt || d.getTime()));
+    return !!n && n < minuteStart;
+  }
+
+  // cron は 20 秒ごとに確認し、同じ分には 1 回だけ実行する。逃した予定は何回分あっても 1 回だけ実行する
   let lastMinute = '';
-  setInterval(() => {
-    const d = new Date();
+  function tick(d = new Date()) {
     const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}-${d.getHours()}-${d.getMinutes()}`;
     if (key === lastMinute) return;
     lastMinute = key;
     for (const a of list) {
       const r = rt.get(a.id);
-      if (a.enabled && a.kind === 'cron' && r && r.cron && cron.matches(r.cron, d)) fire(a);
+      if (!a.enabled || a.kind !== 'cron' || !r || !r.cron) continue;
+      if (cron.matches(r.cron, d)) fire(a, {}, { scheduled: d.getTime() });
+      else if (missed(a, r, d)) {
+        console.log(`オートメーション「${a.name}」: 逃した予定の分を実行します`);
+        fire(a, {}, { scheduled: d.getTime() });
+      }
     }
-  }, 20000).unref();
+  }
+  setInterval(() => tick(), 20000).unref();
 
   // ジョブが終わったら、「このあとに動かす」オートメーションを登録する
   function onJobFinished(job) {
@@ -254,6 +271,7 @@ function createAutomations(deps) {
       return true;
     },
     onJobFinished,
+    tick, // テスト用
     run(id) {
       const a = list.find((x) => x.id === id);
       if (!a) throw new Error('見つかりません');
