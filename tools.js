@@ -151,8 +151,9 @@ function checkStdio(s) {
     let done = false;
     let buf = '';
     let stderr = '';
-    // Windows では npx.cmd などを解決するためシェル経由で起動する
-    const proc = spawn(s.command, s.args, { env: { ...process.env, ...s.env }, shell: IS_WIN, windowsHide: true });
+    // Windows では npx.cmd などを解決するためシェル経由で起動する(空白を含むパスは引用符で囲む)
+    const q = (a) => (IS_WIN && /\s/.test(a) && !/^".*"$/.test(a) ? `"${a}"` : a);
+    const proc = spawn(q(s.command), (s.args || []).map(q), { env: { ...process.env, ...s.env }, shell: IS_WIN, windowsHide: true });
     const finish = (r) => {
       if (done) return;
       done = true;
