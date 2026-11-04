@@ -337,6 +337,7 @@ npm test
 - Node.js 標準のテストランナー(`node --test`)で、外部のテストライブラリは使いません。
 - 単体テスト(cron・起動コマンド・使用量・共有バス・ジョブの入力検査・窓口・git / worktree・監査ログ・MCP サーバー管理)と、本物の `server.js` を偽の claude(`test/fixtures/bin/claude`)で起動して API を通して確かめる結合テストがあります。結合テストは macOS / Linux のみで、本物の Claude は呼びません(料金はかかりません)。
 - GitHub Actions(`.github/workflows/test.yml`)で、push と PR のたびに Ubuntu / macOS × Node.js 20 / 22 で実行します。
+- PR を開く・更新すると、`.github/workflows/claude-review.yml` で Claude が自動レビューし、セキュリティ前提(127.0.0.1 限定・Host / Origin 検証など)を緩めていないかを中心に、該当行へ日本語でコメントします。リポジトリのシークレット `CLAUDE_CODE_OAUTH_TOKEN`(`claude setup-token` で取得)が必要です。
 
 ## トラブルシューティング
 
