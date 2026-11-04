@@ -1,0 +1,25 @@
+name: Claude レビュー
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            この PR をレビューしてください。CLAUDE.md の「注意点」にあるセキュリティ前提
+            (127.0.0.1 限定・Host/Origin 検証・APPS_PORT の別オリジン・hook/MCP の送信項目・
+            エージェント用ジョブの制限)を緩めていないかを重点的に見てください。
+            バグ・セキュリティ問題・README の更新漏れを優先し、細かな好みの指摘は控えめに。
+            指摘は日本語で、該当行への PR コメントとして書いてください。
+          claude_args: "--max-turns 10"
