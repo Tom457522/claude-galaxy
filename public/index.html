@@ -238,7 +238,9 @@
           <div class="bm-row mem-tools">
             <button type="button" id="mem-review-now" class="btn" title="矛盾・重複・古い項目を探して、直す候補を出すジョブを今すぐ登録します(共有メモリは直接変えません)">今すぐ棚卸し</button>
             <button type="button" id="mem-review-weekly" class="btn" title="毎週月曜 9 時に棚卸しのジョブを登録するオートメーションを作ります">毎週の棚卸しを登録</button>
+            <button type="button" id="mem-export" class="btn" title="確認済みの項目を Vault に書き出します(設定 → 共有メモリの書き出し)">Vault に書き出す</button>
           </div>
+          <div id="mem-export-state" class="g-note"></div>
           <div id="mem-cands" class="mem-cands hidden"></div>
           <details id="mem-lint" class="mem-lint hidden"><summary></summary><ul></ul></details>
           <input id="mem-search" type="text" placeholder="検索(キー・値・タグ)" autocomplete="off">
@@ -406,6 +408,15 @@
             <label class="g-chk"><input type="checkbox" id="st-inbox"> 権限確認を受信箱で答える(オフならターミナルのダイアログだけ)</label>
             <label class="g-chk"><input type="checkbox" id="st-gate"> 承認ゲート: 危ないコマンドは許可済みでも受信箱の承認を待つ(無人のジョブにも効く。承認がなければ実行しない)</label>
             <label class="set-inline set-wide">承認を求めるコマンド(正規表現・1 行に 1 つ。通常の git push は含めていません)<textarea id="st-gate-pats" rows="5" spellcheck="false"></textarea></label>
+          </div>
+
+          <div class="set-sec">
+            <h3>共有メモリの書き出し</h3>
+            <small class="g-note">確認済みの項目を、Obsidian の Vault(SecondBrain など)の「03_Areas/エージェントの知識/項目」に 1 項目 1 ノートで書き出します。クラウドのスケジュールタスクやスマホからも読めるようになります。秘密らしい文字列を含む項目は書き出しません。</small>
+            <label class="set-inline set-wide">Vault のフォルダ(空なら書き出さない)<input id="st-mx-vault" type="text" autocomplete="off" spellcheck="false" placeholder="例: ~/SecondBrain"></label>
+            <label class="set-inline">書き出し方 <select id="st-mx-mode"><option value="off">書き出さない</option><option value="files">ファイルを書くだけ</option><option value="push">そのフォルダだけコミットして push</option></select></label>
+            <label class="g-chk"><input type="checkbox" id="st-mx-auto"> 共有メモリが変わったら、10 分後にまとめて自動で書き出す</label>
+            <small class="g-note">push を選ぶと、共有メモリの内容が Vault のリモート(GitHub など)に送られます。push 先は Vault の git の設定のままです。</small>
           </div>
 
           <div class="set-sec">

@@ -51,6 +51,9 @@
     set('#st-wtdir', st.worktreeDir || '');
     chk('#st-bus', st.busEnabled !== false);
     chk('#st-memlearn', st.memoryLearn);
+    set('#st-mx-vault', st.memoryExportVault || '');
+    set('#st-mx-mode', st.memoryExportMode || 'off');
+    chk('#st-mx-auto', st.memoryExportAuto);
     chk('#st-audit', st.auditEnabled !== false);
     set('#st-audit-days', String(st.auditDays || 30));
     UI.setNotifyEnabled(st.notifyDesktop !== false);
@@ -96,6 +99,9 @@
     bool('#st-cloud', 'budgetIncludeCloud');
     bool('#st-bus', 'busEnabled');
     bool('#st-memlearn', 'memoryLearn');
+    bool('#st-mx-auto', 'memoryExportAuto');
+    $('#st-mx-vault').addEventListener('change', (e) => put({ memoryExportVault: e.target.value }));
+    $('#st-mx-mode').addEventListener('change', (e) => put({ memoryExportMode: e.target.value }));
     bool('#st-audit', 'auditEnabled');
     $('#st-max').addEventListener('change', (e) => put({ maxConcurrentJobs: Number(e.target.value) }));
     $('#st-audit-days').addEventListener('change', (e) => put({ auditDays: Number(e.target.value) }));

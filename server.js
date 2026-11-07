@@ -17,6 +17,7 @@ const { createJobManager } = require('./jobs');
 const { createAutomations } = require('./automations');
 const { createBus } = require('./bus');
 const memoryPromptLib = require('./memory-prompt');
+const memoryExportLib = require('./memory-export');
 const cmdline = require('./cmdline');
 const { createAudit, targetOf } = require('./audit');
 const gitx = require('./git');
@@ -879,7 +880,53 @@ const bus = createBus({
       broadcast('board', { unreadUser: bus.unreadCount('user') });
       for (const s of sessions.values()) emit(s);
     }, 200);
+    scheduleMemoryExport();
   },
+});
+
+// ---- 共有メモリの書き出し(確認済みの項目を Vault のフォルダへ。memory-export.js)----
+//   設定: memoryExportVault(Vault のフォルダ)/ memoryExportMode(off / files / push)/ memoryExportAuto(変わったら自動で)
+//   自動のときは、変更がおさまってから 10 分後にまとめて 1 回書き出す
+const MEMORY_EXPORT_DELAY = 10 * 60 * 1000;
+let memoryExportTimer = null;
+let memoryExportLast = null; // { at, ok, exported, written, removed, blocked, committed, pushed, error, auto }
+function runMemoryExport({ auto = false } = {}) {
+  const mode = settings.memoryExportMode;
+  if (!settings.memoryExportVault || !['files', 'push'].includes(mode)) throw new Error('書き出し先の Vault を設定し、書き出し方を選んでください(設定 → 共有メモリの書き出し)');
+  const last = { at: Date.now(), auto, ok: false };
+  try {
+    const vault = resolveCwd(settings.memoryExportVault);
+    const r = memoryExportLib.exportTo(vault, bus.memSearch('', { limit: 2000 }));
+    Object.assign(last, { exported: r.exported, written: r.written.length, removed: r.removed.length, blocked: r.blocked, dir: r.dir });
+    if (mode === 'push') {
+      const g = gitx.commitDirAndPush(vault, memoryExportLib.SUBDIR, `エージェントの知識を書き出す(Claude Galaxy・${r.exported} 件)`);
+      Object.assign(last, g);
+    }
+    last.ok = true;
+    audit.log({ agent: 'user', agentName: auto ? '自動の書き出し' : 'あなた', kind: 'memory-export', target: r.dir,
+      detail: `${r.exported} 件(書いた ${r.written.length}・消した ${r.removed.length}・止めた ${r.blocked.length})${last.pushed ? '・push 済み' : ''}` });
+  } catch (e) {
+    last.error = e.message;
+  }
+  memoryExportLast = last;
+  broadcast('board', { unreadUser: bus.unreadCount('user') });
+  if (!last.ok && !auto) throw new Error(last.error);
+  return last;
+}
+// 書き出す対象(確認済みの項目)が変わったときだけ予約し直す(メッセージのやり取りでは延ばさない)
+let memoryExportSig = '';
+function scheduleMemoryExport() {
+  if (!settings.memoryExportAuto || !settings.memoryExportVault || !['files', 'push'].includes(settings.memoryExportMode)) return;
+  const sig = bus.memSearch('', { limit: 2000 }).filter((m) => m.verified).map((m) => `${m.key}\u0000${m.updatedAt}\u0000${m.expires}`).sort().join('\n');
+  if (sig === memoryExportSig) return;
+  memoryExportSig = sig;
+  clearTimeout(memoryExportTimer);
+  memoryExportTimer = setTimeout(() => { memoryExportTimer = null; runMemoryExport({ auto: true }); }, MEMORY_EXPORT_DELAY);
+  memoryExportTimer.unref();
+}
+const memoryExportStatus = () => ({
+  vault: settings.memoryExportVault || '', mode: settings.memoryExportMode || 'off', auto: !!settings.memoryExportAuto,
+  pending: !!memoryExportTimer, last: memoryExportLast, subdir: memoryExportLib.SUBDIR,
 });
 
 const { agentName, agentList, resolveAgent, typeInto, busCall } = createAgents({
@@ -937,7 +984,7 @@ const ctx = {
   removeMcpConfig, cleanupWorktree, broadcast, sseClients, resolveCwd, isClaudeCommand, assertCommandExists,
   agentName, agentList, resolveAgent, typeInto, busCall, hookAuth, runClaude, buildGraph,
   claudeMcpServers, claudeExtensions, targetOf,
-  budget, plan, cloud, usageScan, diagnose, search, onDiagHook, waitDiagHook, tokenFor, revokeToken, writeMemoryPrompt, memoryPrompt, memoryPromptLib,
+  budget, plan, cloud, usageScan, diagnose, search, onDiagHook, waitDiagHook, tokenFor, revokeToken, writeMemoryPrompt, memoryPrompt, memoryPromptLib, runMemoryExport, memoryExportStatus,
   writeHookSettings, HOOK_JS, MCP_JS, TMP_DIR, SETTINGS_FILE, PORT,
   DEFAULT_COMMAND, JOB_COMMAND, SHELL, IS_WIN, PERMISSION_WAIT, APPS_PORT, ROOT_DIR: __dirname,
 };

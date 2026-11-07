@@ -7,7 +7,7 @@
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-  const S = { messages: [], memory: [], candidates: [], lint: [], memoryLearn: false, agents: [], unread: 0, opts: {}, visible: false, query: '', open: new Set(), timer: null };
+  const S = { messages: [], memory: [], candidates: [], lint: [], memoryLearn: false, memoryExport: null, agents: [], unread: 0, opts: {}, visible: false, query: '', open: new Set(), timer: null };
 
   async function api(method, url, body) {
     const res = await fetch(url, {
@@ -88,6 +88,21 @@
     renderCandidates();
     renderLint();
     $('#mem-learn').checked = !!S.memoryLearn;
+    renderExport();
+  }
+
+  function renderExport() {
+    const x = S.memoryExport;
+    const el = $('#mem-export-state');
+    if (!x || x.mode === 'off' || !x.vault) { el.textContent = 'Vault への書き出しはオフです(設定 → 共有メモリの書き出し)'; return; }
+    const l = x.last;
+    const head = `書き出し先: ${x.vault}(${x.mode === 'push' ? 'コミットして push' : 'ファイルだけ'}${x.auto ? '・自動' : ''}${x.pending ? '・予約あり' : ''})`;
+    if (!l) { el.textContent = `${head}。まだ書き出していません`; return; }
+    const when = fmtTime(l.at);
+    el.innerHTML = esc(head) + '<br>' + (l.ok
+      ? esc(`${when} に ${l.exported} 件を書き出しました(書いた ${l.written}・消した ${l.removed}${l.pushed ? '・push 済み' : l.committed ? '・コミット済み' : ''})`) +
+        (l.blocked && l.blocked.length ? `<br>書き出さなかったもの: ${l.blocked.map((b) => esc(`${b.key}(${b.reason})`)).join('、')}` : '')
+      : `<span class="error">${esc(`${when} の書き出しに失敗しました: ${l.error}`)}</span>`);
   }
 
   function renderCandidates() {
@@ -158,6 +173,7 @@
       S.candidates = d.candidates || [];
       S.lint = d.lint || [];
       S.memoryLearn = !!d.memoryLearn;
+      S.memoryExport = d.memoryExport || null;
       S.agents = d.agents;
       setUnread(d.unreadUser);
       render();
@@ -272,6 +288,16 @@
         } catch (err) { UI.toast(err.message, { type: 'error' }); }
       });
     }
+    $('#mem-export').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        const r = await api('POST', '/api/board/memory/export');
+        UI.toast(`${r.exported} 件を書き出しました${r.pushed ? '(push 済み)' : ''}`);
+      } catch (err) { UI.toast(err.message, { type: 'error' }); }
+      btn.disabled = false;
+      load();
+    });
     document.addEventListener('click', (e) => {
       const b = e.target.closest('.mem-preview-btn');
       if (b) preview(b.dataset.for);

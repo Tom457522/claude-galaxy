@@ -12,7 +12,7 @@ module.exports = function routes(ctx) {
     createSession, restartSession, publicInfo, emit, persist, setStatus, applyHook, trackTranscript,
     removeMcpConfig, cleanupWorktree, broadcast, sseClients, resolveCwd, isClaudeCommand, assertCommandExists,
     agentName, agentList, resolveAgent, typeInto, busCall, hookAuth, runClaude, buildGraph,
-    claudeMcpServers, claudeExtensions, targetOf, memoryPrompt, memoryPromptLib,
+    claudeMcpServers, claudeExtensions, targetOf, memoryPrompt, memoryPromptLib, runMemoryExport, memoryExportStatus,
     DEFAULT_COMMAND, JOB_COMMAND, SHELL, IS_WIN, PERMISSION_WAIT, APPS_PORT, ROOT_DIR
   } = ctx;
 
@@ -23,6 +23,7 @@ module.exports = function routes(ctx) {
     candidates: bus.candidates(),
     lint: memoryPromptLib.lint(bus.memSearch('', { limit: 2000 })),
     memoryLearn: !!settings.memoryLearn,
+    memoryExport: memoryExportStatus(),
     unreadUser: bus.unreadCount('user'),
     agents: agentList(),
   })));
@@ -64,6 +65,9 @@ module.exports = function routes(ctx) {
     const r = memoryPrompt(String(q || '').slice(0, 500));
     return { ...r, text: r.text.slice(0, 60000) };
   }));
+
+  // 確認済みの項目を Vault に書き出す(設定 → 共有メモリの書き出し)。push の設定なら、そのフォルダだけをコミットして push する
+  app.post('/api/board/memory/export', wrap(() => runMemoryExport()));
 
   // ---- 候補(エージェントが memory_propose で出した提案)----
   app.post('/api/board/candidates/:id/approve', wrap((req) => {
