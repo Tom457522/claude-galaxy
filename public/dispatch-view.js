@@ -45,6 +45,7 @@
     $('#dp-perm').value = plan.permissionMode || '';
     $('#dp-mcp').innerHTML = window.ToolsView.pickerHtml(null);
     $('#dp-memory').value = '';
+    $('#dp-memory-pv').classList.add('hidden');
     const how = plan.router === 'claude' ? 'Claude が振り分けました' : '簡単な規則で振り分けました';
     $('#dp-reason').textContent = [how, plan.reason, plan.note].filter(Boolean).join('  ・  ');
   }

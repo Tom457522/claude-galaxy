@@ -50,6 +50,7 @@
     set('#st-dmodel', st.dispatchModel || 'haiku');
     set('#st-wtdir', st.worktreeDir || '');
     chk('#st-bus', st.busEnabled !== false);
+    chk('#st-memlearn', st.memoryLearn);
     chk('#st-audit', st.auditEnabled !== false);
     set('#st-audit-days', String(st.auditDays || 30));
     UI.setNotifyEnabled(st.notifyDesktop !== false);
@@ -94,6 +95,7 @@
     bool('#st-pl-pace', 'planPaceGuard');
     bool('#st-cloud', 'budgetIncludeCloud');
     bool('#st-bus', 'busEnabled');
+    bool('#st-memlearn', 'memoryLearn');
     bool('#st-audit', 'auditEnabled');
     $('#st-max').addEventListener('change', (e) => put({ maxConcurrentJobs: Number(e.target.value) }));
     $('#st-audit-days').addEventListener('change', (e) => put({ auditDays: Number(e.target.value) }));

@@ -16,6 +16,7 @@ const { UsageTracker, createUsageScanner, costFor } = require('./usage');
 const { createJobManager } = require('./jobs');
 const { createAutomations } = require('./automations');
 const { createBus } = require('./bus');
+const memoryPromptLib = require('./memory-prompt');
 const cmdline = require('./cmdline');
 const { createAudit, targetOf } = require('./audit');
 const gitx = require('./git');
@@ -96,9 +97,9 @@ const TMP_DIR = path.join(os.tmpdir(), 'claude-galaxy');
 const SETTINGS_FILE = path.join(TMP_DIR, `hooks-${PORT}.json`);
 const MCP_JS = path.join(__dirname, 'mcp-bus.js');
 // 共有バスのツールのうち、読むだけのもの・自分の記録を書くだけのものは確認なしで使えるようにする
-// (ジョブの登録・中止、ほかのセッションへの入力、メモリの削除は確認が要る)
+// (ジョブの登録・中止、ほかのセッションへの入力、メモリの削除は確認が要る。memory_propose は人が承認するまで何も変えない)
 const BUS_AUTO_ALLOW = [
-  'list_agents', 'read_messages', 'send_message', 'get_job', 'list_jobs', 'memory_read', 'memory_search', 'memory_write',
+  'list_agents', 'read_messages', 'send_message', 'get_job', 'list_jobs', 'memory_read', 'memory_search', 'memory_write', 'memory_propose',
 ].map((t) => `mcp__galaxy__${t}`);
 const { fwd } = cmdline;
 
@@ -170,25 +171,18 @@ function removeMcpConfig(id) {
 }
 
 // 共有メモリから、最初に渡す内容(--append-system-prompt-file)を作る
-//   query: 空白区切り。「tag:名前」はタグ、それ以外はキーの先頭か語の一致
+//   query: 空白区切り。「tag:名前」はタグ、それ以外はキーの先頭か語の一致。
+//   必須 → 確認済み → 新しい順に入れ、期限切れは外す(memory-prompt.js)。
+//   設定「学びを候補として残させる」がオンなら、memory_propose で学びを出す指示も足す
 const memoryFile = (id) => path.join(TMP_DIR, `memory-${PORT}-${id}.md`);
+function memoryPrompt(query) {
+  return memoryPromptLib.selectForPrompt(bus.memSearch('', { limit: 2000 }), query, {
+    learn: !!settings.memoryLearn && settings.busEnabled !== false,
+  });
+}
 function writeMemoryPrompt(id, query) {
-  const terms = String(query || '').split(/\s+/).filter(Boolean);
-  if (!terms.length) return null;
-  const picked = new Map();
-  for (const t of terms) {
-    const list = t.startsWith('tag:')
-      ? bus.memSearch('', { limit: 2000 }).filter((m) => (m.tags || []).includes(t.slice(4)))
-      : [...bus.memSearch('', { prefix: t, limit: 200 }), ...bus.memSearch(t, { limit: 200 })];
-    for (const m of list) picked.set(m.key, m);
-  }
-  if (!picked.size) return null;
-  let text = '# Claude Galaxy の共有メモリ(ほかのエージェントや人が残した知識)\n\n';
-  for (const m of picked.values()) {
-    const part = `## ${m.key}${m.tags && m.tags.length ? ` [${m.tags.join(', ')}]` : ''}\n${m.value}\n\n`;
-    if (text.length + part.length > 30000) { text += '(多いため、ここまでにしました。続きは memory_search で探してください)\n'; break; }
-    text += part;
-  }
+  const { text } = memoryPrompt(query);
+  if (!text) return null;
   fs.mkdirSync(TMP_DIR, { recursive: true });
   fs.writeFileSync(memoryFile(id), text, { mode: 0o600 });
   return memoryFile(id);
@@ -943,7 +937,7 @@ const ctx = {
   removeMcpConfig, cleanupWorktree, broadcast, sseClients, resolveCwd, isClaudeCommand, assertCommandExists,
   agentName, agentList, resolveAgent, typeInto, busCall, hookAuth, runClaude, buildGraph,
   claudeMcpServers, claudeExtensions, targetOf,
-  budget, plan, cloud, usageScan, diagnose, search, onDiagHook, waitDiagHook, tokenFor, revokeToken, writeMemoryPrompt,
+  budget, plan, cloud, usageScan, diagnose, search, onDiagHook, waitDiagHook, tokenFor, revokeToken, writeMemoryPrompt, memoryPrompt, memoryPromptLib,
   writeHookSettings, HOOK_JS, MCP_JS, TMP_DIR, SETTINGS_FILE, PORT,
   DEFAULT_COMMAND, JOB_COMMAND, SHELL, IS_WIN, PERMISSION_WAIT, APPS_PORT, ROOT_DIR: __dirname,
 };

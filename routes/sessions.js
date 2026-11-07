@@ -102,6 +102,7 @@ module.exports = function routes(ctx) {
     const b = req.body || {};
     if (typeof b.permissionInbox === 'boolean') settings.permissionInbox = b.permissionInbox;
     if (typeof b.busEnabled === 'boolean') settings.busEnabled = b.busEnabled;
+    if (typeof b.memoryLearn === 'boolean') settings.memoryLearn = b.memoryLearn; // 学びを候補として残させる(次に起動するものから)
     if (Number.isFinite(b.maxConcurrentJobs)) settings.maxConcurrentJobs = Math.min(10, Math.max(1, Math.round(b.maxConcurrentJobs)));
     if (typeof b.auditEnabled === 'boolean') settings.auditEnabled = b.auditEnabled;
     if (Number.isFinite(b.auditDays)) settings.auditDays = Math.min(365, Math.max(1, Math.round(b.auditDays)));

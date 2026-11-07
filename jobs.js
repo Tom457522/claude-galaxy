@@ -57,6 +57,8 @@ function normalize(input, { strict = false } = {}) {
     priority,
     resumeId,
     worktree: !!input.worktree, // 別の git worktree(ブランチ)で実行する
+    // 共有メモリの棚卸し用。共有バスのツールを、読む・候補を出す・人に知らせるだけに絞る(agents.js で強制)
+    memoryReview: !!input.memoryReview,
     memory: str(input.memory, 500), // 共有メモリから最初に渡すもの(キーの先頭・タグ・語。空白区切り)
     mcpServers: Array.isArray(input.mcpServers) ? input.mcpServers.filter((x) => typeof x === 'string').slice(0, 30) : null,
   };
@@ -81,6 +83,7 @@ function createJobManager(deps) {
     priority: j.priority,
     resumeId: j.resumeId,
     worktree: j.worktree,
+    memoryReview: !!j.memoryReview,
     worktreeInfo: j.worktreeInfo || null,
     mcpServers: j.mcpServers,
     status: j.status,

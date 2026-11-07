@@ -102,7 +102,7 @@ const TOOLS = [
   },
   {
     name: 'memory_write',
-    description: '共有メモリにキーと値を書く(同じキーは上書き)。決めたこと・調べた結果・作業の引き継ぎなど、ほかのエージェントにも見せたい知識を残す。キーは "project/topic" のように / で区切ると探しやすい。書いたセッション/ジョブの ID が source として自動で残るので、要約だけでなく根拠の元記録(ジョブの結果・画面ログ)も後からたどれる。',
+    description: '共有メモリにキーと値を書く(同じキーは上書き)。エージェントが書いた項目は「未確認」になり、人がボードで確認するまでそう表示される。人が確認済みにした項目や必須の項目は memory_write では書き換えられない(エラーになる)ので、memory_propose で候補を出す。決めたこと・調べた結果・作業の引き継ぎなど、ほかのエージェントにも見せたい知識を残す。キーは "project/topic" のように / で区切ると探しやすい。書いたセッション/ジョブの ID が source として自動で残るので、要約だけでなく根拠の元記録(ジョブの結果・画面ログ)も後からたどれる。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -115,16 +115,37 @@ const TOOLS = [
     },
   },
   {
+    name: 'memory_propose',
+    description: '共有メモリを直す候補を出す。人がボードで承認すると反映される(承認されるまで共有メモリは変わらない)。作業で得た学び(失敗の原因と避け方、決まった方針など)を残すときや、矛盾・重複・古い項目を直したいときに使う。action: "write" は新しい本文(同じキーなら書き換え)、"delete" は削除の提案。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['write', 'delete'] },
+        key: { type: 'string', description: 'キー(例: "方針/テスト"、"失敗から/windows-path")' },
+        value: { type: 'string', description: '新しい本文(write のとき。結論と理由を短く)' },
+        tags: { type: 'array', items: { type: 'string' } },
+        reason: { type: 'string', description: 'なぜこの候補を出すか(人が判断する材料)' },
+      },
+      required: ['action', 'key', 'reason'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'memory_read',
     description: '共有メモリからキーを指定して読む。',
     inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'], additionalProperties: false },
   },
   {
     name: 'memory_search',
-    description: '共有メモリを語で検索する(キー・値・タグの部分一致。空白区切りの語をすべて含むもの)。query を空にすると新しい順に一覧。prefix でキーの先頭を絞れる。結果の source は書いたセッション/ジョブで、要約だけでは足りないときは get_job(ジョブの場合)で元の結果を確かめる。',
+    description: '共有メモリを語で検索する(キー・値・タグの部分一致。空白区切りの語をすべて含むもの)。query を空にすると新しい順に一覧。prefix でキーの先頭を絞れる。結果の source は書いたセッション/ジョブで、要約だけでは足りないときは get_job(ジョブの場合)で元の結果を確かめる。priority(must = 必須)・verified(人が確認済み)・expires(有効期限)も返す。',
     inputSchema: {
       type: 'object',
-      properties: { query: { type: 'string' }, prefix: { type: 'string' } },
+      properties: {
+        query: { type: 'string' },
+        prefix: { type: 'string' },
+        limit: { type: 'number', description: '件数(既定 50、最大 500)' },
+        brief: { type: 'boolean', description: '値を先頭 300 文字に縮めて返す(全体を見渡すとき)' },
+      },
       additionalProperties: false,
     },
   },

@@ -730,6 +730,28 @@ dialog .app-row .g-chk { align-self: flex-end; margin-bottom: 14px; }
 .mem-tag { font-size: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 0 5px; color: var(--muted); }
 .mem-by { margin-left: auto; font-size: 10px; color: var(--muted); }
 .mem-val { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: var(--text); opacity: .85; margin-top: 2px; }
+.mem-learn { margin-left: auto; font-size: 11px; color: var(--muted); }
+.mem-tools .btn { padding: 2px 8px; font-size: 11px; }
+.mem-badge { font-size: 10px; border-radius: 8px; padding: 0 6px; border: 1px solid var(--border); color: var(--muted); }
+.mem-badge.must { border-color: var(--accent-bright); color: var(--accent-bright); font-weight: 600; }
+.mem-badge.ok { border-color: rgba(80, 180, 120, .6); color: rgb(80, 180, 120); }
+.mem-badge.warn { border-color: rgba(220, 90, 70, .6); color: rgb(220, 90, 70); }
+.mem.expired { opacity: .55; }
+.mem-cands { display: flex; flex-direction: column; gap: 6px; max-height: 40%; overflow-y: auto; border: 1px dashed var(--accent-bright); border-radius: 6px; padding: 6px 8px; }
+.mem-cands h4 { margin: 0; font-size: 12px; color: var(--accent-bright); }
+.mem-cand { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+.mem-cand-reason { color: var(--muted); }
+.mem-cand pre, .mem-preview pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 11px; max-height: 160px; overflow-y: auto; background: var(--page-bg); border-radius: 4px; padding: 4px 6px; }
+.mem-cand .dlg-actions { margin: 0; }
+.mem-cand .btn { padding: 2px 8px; font-size: 11px; }
+.mem-lint { font-size: 12px; }
+.mem-lint summary { cursor: pointer; color: var(--muted); }
+.mem-lint ul { margin: 4px 0 0; padding-left: 18px; }
+.mem-lint a { color: var(--accent-bright); cursor: pointer; }
+.mem-pv-row { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.mem-pv-row .btn { padding: 2px 8px; font-size: 11px; }
+.mem-preview { font-size: 12px; color: var(--muted); width: 100%; }
+.mem-preview ul { margin: 2px 0; padding-left: 18px; }
 @media (max-width: 900px) { .board { grid-template-columns: 1fr; overflow-y: auto; } .board-col { min-height: 420px; } }
 .sum-jobs { cursor: pointer; } .sum-jobs b { color: var(--accent-bright) !important; }
 dialog input[type="checkbox"], dialog input[type="radio"] { width: auto; margin-top: 0; }
@@ -1123,3 +1145,4 @@ dialog.dlg-confirm { width: 440px; }
 .df-wt-row { justify-content: flex-start; } .df-wt-row input[type="text"] { width: auto; margin: 0; }
 .set-wide { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
 .set-wide textarea { width: 100%; font-family: var(--mono, monospace); font-size: 12px; }
+.mem-list { min-height: 140px; }
