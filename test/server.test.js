@@ -198,6 +198,44 @@ test('Claude Galaxy サーバー', { skip }, async (t) => {
     assert.match(r.memory, /team\/db[\s\S]*PostgreSQL を使う/);
   });
 
+  await t.test('共有メモリを Vault に書き出す(ファイルだけ)', async () => {
+    const vault = path.join(home, 'vault');
+    fs.mkdirSync(vault, { recursive: true });
+    await assert.rejects(api('POST', '/api/board/memory/export'), /Vault/);
+    await api('PUT', '/api/settings', { memoryExportVault: vault, memoryExportMode: 'files' });
+    await api('PUT', '/api/board/memory', { key: 'ex/ok', value: '確認済みの知識', verified: true });
+    await api('PUT', '/api/board/memory', { key: 'ex/draft', value: '未確認', verified: false });
+    const r = await api('POST', '/api/board/memory/export');
+    assert.strictEqual(r.ok, true);
+    const dir = path.join(vault, '03_Areas', 'エージェントの知識', '項目');
+    assert.ok(fs.readFileSync(path.join(dir, 'ex／ok.md'), 'utf8').includes('確認済みの知識'));
+    assert.ok(!fs.existsSync(path.join(dir, 'ex／draft.md')));
+    assert.strictEqual((await api('GET', '/api/board')).memoryExport.last.ok, true);
+    await assert.rejects(api('PUT', '/api/settings', { memoryExportVault: path.join(home, 'ない') }), /見つかりません/);
+    await api('PUT', '/api/settings', { memoryExportVault: '', memoryExportMode: 'off' });
+    await api('DELETE', '/api/board/memory?key=ex%2Fok');
+    await api('DELETE', '/api/board/memory?key=ex%2Fdraft');
+  });
+
+  await t.test('共有メモリのプレビュー・重要度・学びの指示・点検', async () => {
+    await api('PUT', '/api/board/memory', { key: 'team/rule', value: '必ず npm test', priority: 'must', verified: true });
+    await api('PUT', '/api/board/memory', { key: 'team/old', value: '古い方針', expires: '2000-01-01' });
+    const p = await api('POST', '/api/board/memory/preview', { query: 'team/' });
+    assert.strictEqual(p.items[0].key, 'team/rule'); // 必須が先
+    assert.deepStrictEqual(p.expired, ['team/old']);
+    assert.ok(p.bytes > 0);
+    await assert.rejects(api('PUT', '/api/board/memory', { key: 'x', value: 'y', priority: 'top' }), /重要度/);
+    await api('PUT', '/api/settings', { memoryLearn: true });
+    const p2 = await api('POST', '/api/board/memory/preview', { query: '' });
+    assert.match(p2.text, /memory_propose/);
+    await api('PUT', '/api/settings', { memoryLearn: false });
+    const b = await api('GET', '/api/board');
+    assert.ok(b.lint.some((i) => i.kind === 'expired' && i.keys.includes('team/old')));
+    assert.ok(Array.isArray(b.candidates));
+    await api('DELETE', '/api/board/memory?key=team%2Fold');
+    await api('DELETE', '/api/board/memory?key=team%2Frule');
+  });
+
   await t.test('予算: 上限を超えるとジョブを待たせ、上限を外すと動く', async () => {
     await api('PUT', '/api/settings', { budgetDailyUsd: 0.01, budgetJobUsd: 0.5 });
     const b = await api('GET', '/api/budget');

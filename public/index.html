@@ -233,7 +233,16 @@
           <div class="board-head">
             <h3>SHARED MEMORY</h3>
             <span id="mem-count" class="g-note"></span>
+            <label class="g-chk mem-learn" title="オンにすると、このアプリで起動する Claude に「作業の終わりに学びを memory_propose で候補として出す」指示を最初に渡します(次に起動するものから)"><input type="checkbox" id="mem-learn"> 学びを候補として残させる</label>
           </div>
+          <div class="bm-row mem-tools">
+            <button type="button" id="mem-review-now" class="btn" title="矛盾・重複・古い項目を探して、直す候補を出すジョブを今すぐ登録します(共有メモリは直接変えません)">今すぐ棚卸し</button>
+            <button type="button" id="mem-review-weekly" class="btn" title="毎週月曜 9 時に棚卸しのジョブを登録するオートメーションを作ります">毎週の棚卸しを登録</button>
+            <button type="button" id="mem-export" class="btn" title="確認済みの項目を Vault に書き出します(設定 → 共有メモリの書き出し)">Vault に書き出す</button>
+          </div>
+          <div id="mem-export-state" class="g-note"></div>
+          <div id="mem-cands" class="mem-cands hidden"></div>
+          <details id="mem-lint" class="mem-lint hidden"><summary></summary><ul></ul></details>
           <input id="mem-search" type="text" placeholder="検索(キー・値・タグ)" autocomplete="off">
           <div id="mem-list" class="mem-list"></div>
           <form id="mf-form" class="bm-form">
@@ -242,6 +251,11 @@
               <input id="mf-tags" type="text" placeholder="タグ(カンマ区切り)" autocomplete="off">
             </div>
             <textarea id="mf-value" rows="3" placeholder="値"></textarea>
+            <div class="bm-row">
+              <label>重要度 <select id="mf-priority"><option value="normal">参考</option><option value="must">必須</option></select></label>
+              <label title="この日を過ぎると、最初に渡す内容から外します(空なら期限なし)">有効期限 <input id="mf-expires" type="date"></label>
+              <label class="g-chk" title="内容を確かめた印です。最初に渡すとき、確認済みを優先します"><input type="checkbox" id="mf-verified" checked> 確認済み</label>
+            </div>
             <div class="dlg-actions"><button type="submit" class="btn primary">書き込む</button></div>
           </form>
         </div>
@@ -397,6 +411,15 @@
           </div>
 
           <div class="set-sec">
+            <h3>共有メモリの書き出し</h3>
+            <small class="g-note">確認済みの項目を、Obsidian の Vault(SecondBrain など)の「03_Areas/エージェントの知識/項目」に 1 項目 1 ノートで書き出します。クラウドのスケジュールタスクやスマホからも読めるようになります。秘密らしい文字列を含む項目は書き出しません。</small>
+            <label class="set-inline set-wide">Vault のフォルダ(空なら書き出さない)<input id="st-mx-vault" type="text" autocomplete="off" spellcheck="false" placeholder="例: ~/SecondBrain"></label>
+            <label class="set-inline">書き出し方 <select id="st-mx-mode"><option value="off">書き出さない</option><option value="files">ファイルを書くだけ</option><option value="push">そのフォルダだけコミットして push</option></select></label>
+            <label class="g-chk"><input type="checkbox" id="st-mx-auto"> 共有メモリが変わったら、10 分後にまとめて自動で書き出す</label>
+            <small class="g-note">push を選ぶと、共有メモリの内容が Vault のリモート(GitHub など)に送られます。push 先は Vault の git の設定のままです。</small>
+          </div>
+
+          <div class="set-sec">
             <h3>エージェント</h3>
             <div class="set-grid">
               <label>ジョブの同時実行数<select id="st-max"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>8</option><option>10</option></select></label>
@@ -404,6 +427,7 @@
               <label>worktree の置き場所(空なら ~/.claude-galaxy/worktrees)<input id="st-wtdir" type="text" autocomplete="off" spellcheck="false"></label>
             </div>
             <label class="g-chk"><input type="checkbox" id="st-bus"> 共有バス(MCP サーバー galaxy)を Claude に渡す(次に起動するものから)</label>
+            <label class="g-chk"><input type="checkbox" id="st-memlearn"> 作業の終わりに、学びを共有メモリの候補として出させる(次に起動するものから。ボードで承認するまで共有メモリは変わりません)</label>
           </div>
 
           <div class="set-sec">
@@ -472,6 +496,7 @@
       <label>共有メモリから最初に渡す(任意・空白区切り。キーの先頭か語、tag:名前 でタグ)
         <input id="f-memory" type="text" placeholder="例: proj/  tag:decision" autocomplete="off" spellcheck="false">
       </label>
+      <div class="mem-pv-row"><button type="button" class="btn mem-preview-btn" data-for="f-memory" title="この指定で最初に渡す項目と量を確かめます">渡す内容を確かめる</button><div id="f-memory-pv" class="mem-preview hidden"></div></div>
       <p id="dlg-error" class="error hidden"></p>
       <div class="dlg-actions">
         <button type="button" id="dlg-cancel" class="btn">キャンセル</button>
@@ -597,6 +622,7 @@
       <label>共有メモリから最初に渡す(任意・空白区切り。キーの先頭か語、tag:名前 でタグ)
         <input id="jf-memory" type="text" placeholder="例: proj/  tag:decision" autocomplete="off" spellcheck="false">
       </label>
+      <div class="mem-pv-row"><button type="button" class="btn mem-preview-btn" data-for="jf-memory" title="この指定で最初に渡す項目と量を確かめます">渡す内容を確かめる</button><div id="jf-memory-pv" class="mem-preview hidden"></div></div>
       <p id="jf-error" class="error hidden"></p>
       <div class="dlg-actions">
         <button type="button" id="jf-cancel" class="btn">キャンセル</button>
@@ -699,6 +725,7 @@
       <label>共有メモリから最初に渡す(任意・空白区切り。キーの先頭か語、tag:名前 でタグ)
         <input id="dp-memory" type="text" placeholder="例: proj/  tag:decision" autocomplete="off" spellcheck="false">
       </label>
+      <div class="mem-pv-row"><button type="button" class="btn mem-preview-btn" data-for="dp-memory" title="この指定で最初に渡す項目と量を確かめます">渡す内容を確かめる</button><div id="dp-memory-pv" class="mem-preview hidden"></div></div>
       <p id="dp-error" class="error hidden"></p>
       <div class="dlg-actions">
         <button type="button" id="dp-reroute" class="btn" title="Claude にもう一度振り分けさせる">振り分け直す</button>

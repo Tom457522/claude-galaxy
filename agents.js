@@ -1,6 +1,8 @@
 'use strict';
 // エージェント(対話セッション・ジョブ)の名前解決と、共有バス(mcp-bus.js)のツール呼び出しの処理
 
+const REVIEW_TOOLS = ['whoami', 'memory_search', 'memory_read', 'memory_propose', 'send_message'];
+
 function createAgents({ sessions, jobs, bus, maxDepth, maxAgentJobs }) {
   function agentName(id) {
     if (id === 'user') return 'あなた';
@@ -57,6 +59,11 @@ function createAgents({ sessions, jobs, bus, maxDepth, maxAgentJobs }) {
     const me = sessions.get(from) || jobs.get(from);
     if (!me) throw new Error('呼び出し元のエージェントが見つかりません');
     const myName = agentName(from);
+    // 棚卸しジョブは、未確認の共有メモリに仕込まれた指示に従っても害がないよう、使えるツールを絞る
+    if (me.memoryReview) {
+      if (!REVIEW_TOOLS.includes(tool)) throw new Error(`棚卸しのジョブでは ${tool} は使えません(memory_search / memory_read / memory_propose と、あなた宛ての send_message だけ)`);
+      if (tool === 'send_message' && String(a.to || '').trim() !== 'user') throw new Error('棚卸しのジョブが送れるのは人(to: "user")宛てだけです');
+    }
     switch (tool) {
       case 'whoami': {
         const j = jobs.get(from);
@@ -112,15 +119,29 @@ function createAgents({ sessions, jobs, bus, maxDepth, maxAgentJobs }) {
         return { canceled: jobs.cancel(j.id) };
       }
       case 'memory_write':
+        // エージェントが書いたものは「未確認」になり、重要度・期限は人だけが決める
         return bus.memWrite(a.key, a.value, {
           tags: a.tags,
           author: `${myName} (${from})`,
           source: { kind: sessions.has(from) ? 'session' : 'job', id: from },
+          agent: true,
         });
+      case 'memory_propose': {
+        const c = bus.propose({
+          action: a.action, key: a.key, value: a.value, tags: a.tags, reason: a.reason,
+          author: `${myName} (${from})`,
+          source: { kind: sessions.has(from) ? 'session' : 'job', id: from },
+        });
+        return { candidate: c.id, action: c.action, key: c.key, note: '人がボードで承認すると共有メモリに入ります(却下されることもあります)。' };
+      }
       case 'memory_read':
         return bus.memRead(String(a.key || '')) || { error: 'そのキーはありません' };
-      case 'memory_search':
-        return bus.memSearch(a.query, { prefix: typeof a.prefix === 'string' ? a.prefix : '' });
+      case 'memory_search': {
+        const limit = Math.min(500, Math.max(1, Number(a.limit) || 50));
+        const list = bus.memSearch(a.query, { prefix: typeof a.prefix === 'string' ? a.prefix : '', limit });
+        // brief: 値を短くして全体を見渡す(棚卸し用)
+        return a.brief ? list.map((m) => ({ ...m, value: m.value.slice(0, 300), length: m.value.length })) : list;
+      }
       case 'memory_delete':
         return { deleted: bus.memDelete(String(a.key || '')) };
       default:

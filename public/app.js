@@ -910,6 +910,7 @@ async function openDialog(prefill = {}) {
   $('#dlg-error').classList.add('hidden');
   $('#f-worktree').checked = false;
   $('#f-memory').value = '';
+  $('#f-memory-pv').classList.add('hidden');
   $('#f-mcp').innerHTML = window.ToolsView.pickerHtml(null);
   dlg.showModal();
   (hasCwd || prefill.appId ? $('#f-cwd') : $('#f-name')).focus();
