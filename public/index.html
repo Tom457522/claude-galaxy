@@ -67,16 +67,24 @@
         <!-- ホーム: 2D 表示(ルートフォルダごとのカード一覧) -->
         <div id="home2d" class="home2d">
           <div class="h2-bar">
+            <span class="h2-levels" id="h2-levels" role="group" aria-label="起点から何段先まで表示するか">階層
+              <button data-lv="1">1</button><button data-lv="2">2</button><button data-lv="3">3</button><button data-lv="0" title="読み込んだ深さまですべて">全</button>
+            </span>
             <label>並び <select id="h2-sort">
               <option value="sessions">セッション優先</option>
               <option value="files">ファイル数</option>
               <option value="name">名前</option>
             </select></label>
-            <button class="btn" data-act="expand-all">すべて開く</button>
+            <button class="btn" data-act="expand-all" title="「ほか N 件」をすべて広げます">すべて開く</button>
             <button class="btn" data-act="collapse-all">すべて閉じる</button>
+            <button class="btn" data-act="home-view" title="起点を左上に戻します">起点へ</button>
+            <button class="btn" data-act="fit">全体</button>
             <span id="h2-note" class="g-note"></span>
           </div>
-          <div id="h2-list" class="h2-list"></div>
+          <div class="h2-stage">
+            <canvas id="h2-canvas" aria-label="フォルダの階層を、左上の起点から右へ並べたツリー。カードをタップするとそのフォルダが起点になります"></canvas>
+            <div id="h2-detail" class="h2-detail" hidden></div>
+          </div>
         </div>
 
         <aside id="g-panel" class="g-panel">
