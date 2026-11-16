@@ -33,6 +33,23 @@ const KEYS = {
   memoryExportMode: { label: '共有メモリの書き出し方', type: 'enum', values: ['off', 'files', 'push'], section: 'export', noAi: true },
 };
 const AUDIT_DAYS = [7, 30, 90, 365];
+// 安全側の向き。AI の案は、この向きに「ゆるめる」変更を出せない(規則の案は理由を付けて出してよい)
+//   on: オンが安全(オフにする案を落とす)/ cap: 0 は上限なし。上げる・0 にする案を落とす / more: 減らす案を落とす / less: 増やす案を落とす
+const SAFE = {
+  approvalGate: 'on', permissionInbox: 'on', notifyDesktop: 'on', auditEnabled: 'on', collectSafetyEvents: 'on', budgetIncludeCloud: 'on', planPaceGuard: 'on',
+  budgetDailyUsd: 'cap', budgetJobUsd: 'cap', budgetSessionWarnUsd: 'cap', planLimitSessionPct: 'cap', planLimitWeeklyPct: 'cap',
+  planPaceMargin: 'less', auditDays: 'more',
+};
+function loosens(key, from, to) {
+  const dir = SAFE[key];
+  if (!dir) return false;
+  if (dir === 'on') return to === false;
+  const f = Number(from) || 0;
+  const t = Number(to) || 0;
+  if (dir === 'cap') return (f === 0 ? Infinity : f) < (t === 0 ? Infinity : t);
+  if (dir === 'more') return t < f;
+  return t > f;
+}
 // KEYS 自身のキーか(constructor などの継承プロパティを通さない)
 const isKey = (k) => Object.prototype.hasOwnProperty.call(KEYS, k);
 const EXPORT_MODE = { off: '書き出さない', files: 'ファイルを書くだけ', push: 'コミットして push' };
@@ -167,6 +184,7 @@ function item(settings, { id, title, patch, reason, priority = 'mid', source = '
     if (to === undefined) continue;
     const from = settings[k];
     if (from === to || (from === undefined && to === false)) continue;
+    if (source === 'ai' && loosens(k, from, to)) continue; // AI の案は安全側の設定をゆるめない
     clean[k] = to;
     changes.push({ key: k, label: KEYS[k].label, section: KEYS[k].section, from: from ?? null, to, fromText: fmt(k, from), toText: fmt(k, to) });
   }
@@ -343,4 +361,4 @@ function parseAi(raw, settings = {}) {
   return { summary: String(j.summary || '').slice(0, 400), items };
 }
 
-module.exports = { KEYS, sanitize, fmt, niceUp, quantile, findVaults, facts, recommend, preset, presets, aiPrompt, parseAi };
+module.exports = { KEYS, loosens, sanitize, fmt, niceUp, quantile, findVaults, facts, recommend, preset, presets, aiPrompt, parseAi };

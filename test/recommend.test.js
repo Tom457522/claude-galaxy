@@ -137,3 +137,22 @@ test('AI の答えは、知らないキー・範囲外・いまと同じ値を�
   assert.strictEqual(rec.parseAi('答えられません', BASE), null);
   assert.strictEqual(rec.parseAi('{壊れた', BASE), null);
 });
+
+test('AI の案は、承認・記録・上限を「ゆるめる」変更を落とす', () => {
+  const cur = { ...BASE, approvalGate: true, auditEnabled: true, budgetDailyUsd: 10, planLimitWeeklyPct: 80, auditDays: 90, planPaceMargin: 10 };
+  const loose = { approvalGate: false, auditEnabled: false, permissionInbox: false, budgetDailyUsd: 0, planLimitWeeklyPct: 95, auditDays: 30, planPaceMargin: 20 };
+  const raw = JSON.stringify({ summary: 's', items: [
+    { id: 'loose', patch: loose },
+    { id: 'tight', patch: { budgetDailyUsd: 8, planLimitWeeklyPct: 70, auditDays: 365, planPaceMargin: 5, collectSafetyEvents: true, maxConcurrentJobs: 1 } },
+  ] });
+  const r = rec.parseAi(raw, cur);
+  assert.deepStrictEqual(ids(r.items), ['tight']);
+  assert.deepStrictEqual(r.items[0].patch, { budgetDailyUsd: 8, planLimitWeeklyPct: 70, auditDays: 365, planPaceMargin: 5, collectSafetyEvents: true, maxConcurrentJobs: 1 });
+  // 上限なしから上限を付けるのは締める向き
+  assert.strictEqual(rec.loosens('budgetDailyUsd', 0, 20), false);
+  assert.strictEqual(rec.loosens('budgetDailyUsd', 20, 0), true);
+  assert.strictEqual(rec.loosens('maxConcurrentJobs', 1, 10), false); // 安全の向きを持たない項目は対象外
+  // 規則の案(上限の引き上げ)は理由を付けて出せる
+  const s2 = { ...BASE, budgetDailyUsd: 5 };
+  assert.ok(ids(rec.recommend(rec.facts({ settings: s2, usage: usage([6, 7, 8, 9, 10, 4]), now: NOW }), s2)).includes('budget-daily-up'));
+});
