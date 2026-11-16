@@ -19,6 +19,7 @@
     </nav>
     <button id="btn-new" class="btn primary">＋ 新規セッション</button>
     <button id="btn-palette" class="palette-btn" title="やりたいことの振り分け・画面の移動・操作(Ctrl+K)"><kbd>Ctrl K</kbd> やりたいこと・移動…</button>
+    <button id="btn-search" class="btn top-search" title="セッションの画面出力・ジョブ・メッセージ・共有メモリをまとめて探す">⌕ 検索</button>
     <div class="spacer"></div>
     <label id="layout-wrap" class="layout-label hidden">レイアウト
       <select id="layout">
@@ -269,6 +270,36 @@
         </div>
       </section>
 
+      <!-- 管理: おすすめ設定 -->
+      <section id="recommend" class="jobs hidden">
+        <div class="jobs-wrap set-wrap">
+          <div class="apps-head">
+            <div>
+              <h2><span>◎</span> RECOMMEND</h2>
+              <p>使用量・プランの利用率・ジョブ・オートメーションの記録から、あなたの使い方に合う設定の変更案を作ります。<b>選んで「適用」を押すまで設定は変わりません</b>。</p>
+            </div>
+            <div class="jobs-tools">
+              <button id="rc-reload" class="btn" title="規則で作り直す(Claude は呼びません)">⟳</button>
+              <button id="rc-ai" class="btn primary" title="数値と設定値だけを Claude(ツールなし)に渡して、案を見直し、理由を説明してもらいます">✦ AI に見直してもらう</button>
+            </div>
+          </div>
+          <div id="rc-facts" class="rc-facts"></div>
+          <div class="rc-presets">
+            <span class="g-note">目的から選ぶ:</span>
+            <span id="rc-preset-btns"></span>
+            <button id="rc-preset-clear" class="btn hidden">おすすめに戻る</button>
+          </div>
+          <p id="rc-summary" class="rc-summary hidden"></p>
+          <div id="rc-list" class="rc-list"><p class="jobs-empty">読み込んでいます…</p></div>
+          <div class="rc-actions">
+            <button id="rc-apply" class="btn primary" disabled>選んだものを適用</button>
+            <button id="rc-undo" class="btn hidden" title="最後に適用する前の値に戻します">元に戻す</button>
+            <span id="rc-note" class="g-note"></span>
+          </div>
+          <p class="g-note">ここに無い設定(承認を求めるコマンド・worktree の置き場所・バックアップなど)は <a href="#" class="go-settings">設定 ›</a> で変えられます。</p>
+        </div>
+      </section>
+
       <!-- 記録: 監査ログ -->
       <section id="usage" class="jobs hidden">
         <div class="jobs-wrap">
@@ -320,7 +351,7 @@
               <h2><span>☰</span> AUDIT LOG</h2>
               <p>エージェントが実行したツール・権限の判断・起動と終了の記録です(ファイルの中身は残しません)。保存先 <code>~/.claude-galaxy/audit/</code></p>
             </div>
-            <div class="jobs-tools"><a href="#" class="go-settings">記録の設定 ›</a></div>
+            <div class="jobs-tools"><a href="#" class="go-settings" data-adv="1">記録の設定 ›</a></div>
           </div>
           <div class="au-filters">
             <select id="au-days"><option value="1">今日</option><option value="2" selected>2 日</option><option value="7">7 日</option><option value="30">30 日</option></select>
@@ -364,7 +395,7 @@
             <div id="tl-claude" class="tl-list"></div>
             <div id="tl-ext" class="tl-ext"></div>
           </div>
-          <p class="g-note"><a href="#" class="go-settings">worktree の置き場所・窓口のモデルは「設定」にあります ›</a></p>
+          <p class="g-note"><a href="#" class="go-settings" data-adv="1">worktree の置き場所・窓口のモデルは「設定」の詳細設定にあります ›</a></p>
         </div>
       </section>
 
@@ -385,9 +416,11 @@
       <!-- 設定 -->
       <section id="settings" class="jobs hidden">
         <div class="jobs-wrap set-wrap">
-          <div class="apps-head"><div><h2><span>⚙</span> SETTINGS</h2><p>設定はここにまとめています(保存先 <code>~/.claude-galaxy/settings.json</code>。テーマだけはこのブラウザに保存)。</p></div></div>
+          <div class="apps-head"><div><h2><span>⚙</span> SETTINGS</h2><p>アプリの設定です(保存先 <code>~/.claude-galaxy/settings.json</code>。テーマだけはこのブラウザに保存)。</p></div></div>
 
-          <div class="set-sec">
+          <p class="set-lead g-note">迷ったら <a href="#" class="go-recommend">おすすめ ›</a> で、使い方に合う値を選べます。<span class="set-mark">おすすめあり</span> の付いた節は、おすすめと違う値になっています。</p>
+          <h4 class="set-group">基本</h4>
+          <div class="set-sec" data-sec="budget">
             <h3>予算 <small id="st-spent"></small></h3>
             <div id="st-bars" class="st-bars"></div>
             <div class="set-grid">
@@ -398,7 +431,7 @@
             <label class="g-chk"><input type="checkbox" id="st-cloud"> クラウドセッション(claude.ai/code など)の使用額も 1 日の上限に数える</label>
           </div>
 
-          <div class="set-sec">
+          <div class="set-sec" data-sec="plan">
             <h3>プランの制限 <small id="st-plan"></small></h3>
             <div class="set-grid">
               <label>5 時間の制限で止める利用率(%)<input id="st-pl-sess" type="number" min="0" max="100" step="5"><small>この % に達したら新しいジョブを待たせます。0 なら 100%(実際の上限)で止めます</small></label>
@@ -409,7 +442,7 @@
             <small class="g-note">対話セッションは止めません。利用率は 5 分ごとに Claude Code のログイン情報で Anthropic から読みます。</small>
           </div>
 
-          <div class="set-sec">
+          <div class="set-sec" data-sec="notify">
             <h3>通知と承認</h3>
             <label class="g-chk"><input type="checkbox" id="st-notify"> デスクトップ通知(承認待ち・ジョブの完了・予算・あなた宛てのメッセージ)</label>
             <div class="set-row"><button id="st-notify-perm" class="btn">ブラウザに通知を許可する</button><button id="st-notify-test" class="btn">通知を試す</button><span id="st-notify-state" class="g-note"></span></div>
@@ -418,34 +451,7 @@
             <label class="set-inline set-wide">承認を求めるコマンド(正規表現・1 行に 1 つ。通常の git push は含めていません)<textarea id="st-gate-pats" rows="5" spellcheck="false"></textarea></label>
           </div>
 
-          <div class="set-sec">
-            <h3>共有メモリの書き出し</h3>
-            <small class="g-note">確認済みの項目を、Obsidian の Vault(SecondBrain など)の「03_Areas/エージェントの知識/項目」に 1 項目 1 ノートで書き出します。クラウドのスケジュールタスクやスマホからも読めるようになります。秘密らしい文字列を含む項目は書き出しません。</small>
-            <label class="set-inline set-wide">Vault のフォルダ(空なら書き出さない)<input id="st-mx-vault" type="text" autocomplete="off" spellcheck="false" placeholder="例: ~/SecondBrain"></label>
-            <label class="set-inline">書き出し方 <select id="st-mx-mode"><option value="off">書き出さない</option><option value="files">ファイルを書くだけ</option><option value="push">そのフォルダだけコミットして push</option></select></label>
-            <label class="g-chk"><input type="checkbox" id="st-mx-auto"> 共有メモリが変わったら、10 分後にまとめて自動で書き出す</label>
-            <small class="g-note">push を選ぶと、共有メモリの内容が Vault のリモート(GitHub など)に送られます。push 先は Vault の git の設定のままです。</small>
-          </div>
-
-          <div class="set-sec">
-            <h3>エージェント</h3>
-            <div class="set-grid">
-              <label>ジョブの同時実行数<select id="st-max"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>8</option><option>10</option></select></label>
-              <label>窓口の振り分けに使うモデル<input id="st-dmodel" type="text" placeholder="haiku" autocomplete="off"></label>
-              <label>worktree の置き場所(空なら ~/.claude-galaxy/worktrees)<input id="st-wtdir" type="text" autocomplete="off" spellcheck="false"></label>
-            </div>
-            <label class="g-chk"><input type="checkbox" id="st-bus"> 共有バス(MCP サーバー galaxy)を Claude に渡す(次に起動するものから)</label>
-            <label class="g-chk"><input type="checkbox" id="st-memlearn"> 作業の終わりに、学びを共有メモリの候補として出させる(次に起動するものから。ボードで承認するまで共有メモリは変わりません)</label>
-          </div>
-
-          <div class="set-sec">
-            <h3>記録</h3>
-            <label class="g-chk"><input type="checkbox" id="st-audit"> 監査ログを残す</label>
-            <label class="g-chk"><input type="checkbox" id="st-safety"> 「止められた操作」を集める(Claude Code の OpenTelemetry の safety_event。次に起動したセッション・ジョブから)</label>
-            <label class="set-inline">保存する日数 <select id="st-audit-days"><option value="7">7 日</option><option value="30">30 日</option><option value="90">90 日</option><option value="365">365 日</option></select></label>
-          </div>
-
-          <div class="set-sec">
+          <div class="set-sec" data-sec="view">
             <h3>表示</h3>
             <label class="set-inline">テーマ
               <select id="st-theme"><option value="auto">OS に合わせる</option><option value="dark">ダーク</option><option value="light">ライト</option></select>
@@ -453,16 +459,46 @@
             <div class="set-row"><button id="st-guide" class="btn">はじめのガイドをもう一度見る</button></div>
           </div>
 
-          <div class="set-sec">
-            <h3>バックアップ</h3>
-            <p class="g-note">設定・一覧・ジョブ・オートメーション・メッセージ・共有メモリ・MCP サーバーを 1 つのファイルにまとめます(画面出力のログと監査ログは含めません)。</p>
-            <div class="set-row">
-              <a id="st-backup" class="btn" href="/api/backup" download>バックアップをダウンロード</a>
-              <a id="st-backup-secrets" class="btn" href="/api/backup?secrets=1" download title="MCP サーバーの環境変数・ヘッダーの値も含めます。ファイルの扱いに注意してください">秘密の値も含める</a>
-              <label class="btn">ファイルから復元…<input id="st-restore" type="file" accept="application/json,.json" hidden></label>
+          <details id="set-adv" class="set-adv">
+            <summary>詳細設定 <small>エージェント・記録・共有メモリの書き出し・バックアップ(ふだんは変えなくて大丈夫です)</small></summary>
+            <div class="set-sec" data-sec="agent">
+              <h3>エージェント</h3>
+              <div class="set-grid">
+                <label>ジョブの同時実行数<select id="st-max"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>8</option><option>10</option></select></label>
+                <label>窓口の振り分けに使うモデル<input id="st-dmodel" type="text" placeholder="haiku" autocomplete="off"></label>
+                <label>worktree の置き場所(空なら ~/.claude-galaxy/worktrees)<input id="st-wtdir" type="text" autocomplete="off" spellcheck="false"></label>
+              </div>
+              <label class="g-chk"><input type="checkbox" id="st-bus"> 共有バス(MCP サーバー galaxy)を Claude に渡す(次に起動するものから)</label>
+              <label class="g-chk"><input type="checkbox" id="st-memlearn"> 作業の終わりに、学びを共有メモリの候補として出させる(次に起動するものから。ボードで承認するまで共有メモリは変わりません)</label>
             </div>
-            <p id="st-restore-note" class="g-note"></p>
-          </div>
+
+            <div class="set-sec" data-sec="record">
+              <h3>記録</h3>
+              <label class="g-chk"><input type="checkbox" id="st-audit"> 監査ログを残す</label>
+              <label class="g-chk"><input type="checkbox" id="st-safety"> 「止められた操作」を集める(Claude Code の OpenTelemetry の safety_event。次に起動したセッション・ジョブから)</label>
+              <label class="set-inline">保存する日数 <select id="st-audit-days"><option value="7">7 日</option><option value="30">30 日</option><option value="90">90 日</option><option value="365">365 日</option></select></label>
+            </div>
+
+            <div class="set-sec" data-sec="export">
+              <h3>共有メモリの書き出し</h3>
+              <small class="g-note">確認済みの項目を、Obsidian の Vault(SecondBrain など)の「03_Areas/エージェントの知識/項目」に 1 項目 1 ノートで書き出します。クラウドのスケジュールタスクやスマホからも読めるようになります。秘密らしい文字列を含む項目は書き出しません。</small>
+              <label class="set-inline set-wide">Vault のフォルダ(空なら書き出さない)<input id="st-mx-vault" type="text" autocomplete="off" spellcheck="false" placeholder="例: ~/SecondBrain"></label>
+              <label class="set-inline">書き出し方 <select id="st-mx-mode"><option value="off">書き出さない</option><option value="files">ファイルを書くだけ</option><option value="push">そのフォルダだけコミットして push</option></select></label>
+              <label class="g-chk"><input type="checkbox" id="st-mx-auto"> 共有メモリが変わったら、10 分後にまとめて自動で書き出す</label>
+              <small class="g-note">push を選ぶと、共有メモリの内容が Vault のリモート(GitHub など)に送られます。push 先は Vault の git の設定のままです。</small>
+            </div>
+
+            <div class="set-sec" data-sec="backup">
+              <h3>バックアップ</h3>
+              <p class="g-note">設定・一覧・ジョブ・オートメーション・メッセージ・共有メモリ・MCP サーバーを 1 つのファイルにまとめます(画面出力のログと監査ログは含めません)。</p>
+              <div class="set-row">
+                <a id="st-backup" class="btn" href="/api/backup" download>バックアップをダウンロード</a>
+                <a id="st-backup-secrets" class="btn" href="/api/backup?secrets=1" download title="MCP サーバーの環境変数・ヘッダーの値も含めます。ファイルの扱いに注意してください">秘密の値も含める</a>
+                <label class="btn">ファイルから復元…<input id="st-restore" type="file" accept="application/json,.json" hidden></label>
+              </div>
+              <p id="st-restore-note" class="g-note"></p>
+            </div>
+          </details>
         </div>
       </section>
 
@@ -779,6 +815,7 @@
   <script src="/tools-view.js"></script>
   <script src="/dispatch-view.js"></script>
   <script src="/settings-view.js"></script>
+  <script src="/recommend-view.js"></script>
   <script src="/palette-view.js"></script>
   <script src="/app.js"></script>
 </body>

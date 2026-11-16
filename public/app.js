@@ -145,13 +145,17 @@ const GROUPS = {
   apps: ['apps'],
   work: ['term', 'jobs'],
   board: ['board'],
-  admin: ['usage', 'audit', 'search', 'tools', 'settings', 'doctor'],
+  admin: ['recommend', 'usage', 'audit', 'settings', 'tools', 'doctor'],
+  search: ['search'], // 上部の「検索」ボタンとパレットから開く(タブは持たない)
 };
 const SUB_LABEL = {
-  term: 'ターミナル', jobs: 'ジョブ', usage: '使用量', audit: '記録', search: '検索', tools: 'ツール', settings: '設定', doctor: '診断',
+  term: 'ターミナル', jobs: 'ジョブ', recommend: 'おすすめ', usage: '使用量', audit: '記録', search: '検索', tools: 'ツール(MCP)', settings: '設定', doctor: '診断',
 };
+// 設定の中の画面(サブタブには「設定」だけを出し、設定を開いているときに続けて並べる)
+const SUB_PARENT = { tools: 'settings', doctor: 'settings' };
+const SUB_CHILD_LABEL = { settings: 'アプリの設定', tools: 'ツール(MCP)', doctor: '診断' };
 const TABS = Object.values(GROUPS).flat();
-const SECTIONS = ['home', 'apps', 'jobs', 'board', 'usage', 'audit', 'search', 'tools', 'settings', 'doctor']; // term はグリッド(relayout が出し分け)
+const SECTIONS = ['home', 'apps', 'jobs', 'board', 'recommend', 'usage', 'audit', 'search', 'tools', 'settings', 'doctor']; // term はグリッド(relayout が出し分け)
 const groupOf = (tab) => Object.keys(GROUPS).find((g) => GROUPS[g].includes(tab)) || 'home';
 const lsGet = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch (_) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (_) { /* ignore */ } };
@@ -163,8 +167,15 @@ function renderSubnav(group) {
   const nav = $('#subnav');
   nav.classList.toggle('hidden', subs.length < 2);
   if (subs.length < 2) return;
-  nav.innerHTML = subs.map((t) => `<button class="subtab${t === curTab ? ' active' : ''}" data-tab="${t}">${SUB_LABEL[t]}` +
-    `<span class="tab-badge" id="sub-badge-${t}"></span></button>`).join('');
+  const parent = SUB_PARENT[curTab] || curTab;
+  const btn = (t, label, cls = '', active = t === curTab) => `<button class="subtab${cls}${active ? ' active' : ''}" data-tab="${t}">${label}` +
+    `<span class="tab-badge" id="sub-badge-${t}"></span></button>`;
+  let html = subs.filter((t) => !SUB_PARENT[t]).map((t) => btn(t, SUB_LABEL[t], '', t === parent)).join('');
+  const children = subs.filter((t) => SUB_PARENT[t] === parent);
+  if (children.length) {
+    html += '<span class="subnav-sep">›</span>' + [parent, ...children].map((t) => btn(t, SUB_CHILD_LABEL[t] || SUB_LABEL[t], ' sub2')).join('');
+  }
+  nav.innerHTML = html;
   refreshBadges();
 }
 
@@ -181,6 +192,8 @@ function setTab(tab) {
   if (tab === 'audit') window.AuditView.show(); else window.AuditView.hide();
   if (tab === 'usage') window.UsageView.show(); else window.UsageView.hide();
   if (tab === 'tools') window.ToolsView.show();
+  if (tab === 'recommend') window.RecommendView.show();
+  $('#btn-search').classList.toggle('active', tab === 'search');
   $('#layout-wrap').classList.toggle('hidden', tab !== 'term');
   if (tab === 'home') window.GraphView.show(); else window.GraphView.hide();
   if (tab === 'board') window.BoardView.show(); else window.BoardView.hide();
@@ -196,7 +209,7 @@ $('#subnav').addEventListener('click', (e) => {
 });
 
 // バッジ: 作業(入力待ち・承認待ち + 実行中のジョブ)/ ボード(あなた宛ての未読)/ 管理(予算・診断の注意)
-const badges = { waiting: 0, jobs: 0, board: 0, admin: 0 };
+const badges = { waiting: 0, jobs: 0, board: 0, admin: 0, recommend: 0 };
 function setCount(el, n, title) {
   if (!el) return;
   el.textContent = n || '';
@@ -211,6 +224,7 @@ function refreshBadges() {
   setCount($('#sub-badge-term'), badges.waiting);
   setCount($('#sub-badge-jobs'), badges.jobs);
   setCount($('#sub-badge-settings'), badges.admin ? '!' : 0);
+  setCount($('#sub-badge-recommend'), badges.recommend, '優先度の高いおすすめ');
 }
 
 function syncGraphSessions() {
@@ -1064,8 +1078,9 @@ function connectEvents() {
     const st = JSON.parse(e.data);
     inboxToggle.checked = !!st.permissionInbox;
     window.JobsView.onSettings(st);
-    window.BoardView.onSettings(st);
+    if (window.BoardView.onSettings) window.BoardView.onSettings(st);
     window.SettingsView.onSettings(st);
+    window.RecommendView.onSettings();
   });
   es.addEventListener('job', (e) => {
     const j = JSON.parse(e.data);
@@ -1089,7 +1104,8 @@ function connectEvents() {
 function paletteItems() {
   const items = [];
   const add = (group, icon, label, run, hint = '') => items.push({ group, icon, label, run, hint });
-  for (const t of TABS) add('画面', '›', t === 'home' ? 'ホーム' : t === 'apps' ? 'アプリ' : t === 'board' ? 'ボード' : SUB_LABEL[t], () => setTab(t), groupOf(t) === 'admin' ? '管理' : groupOf(t) === 'work' ? '作業' : '');
+  for (const t of TABS) add('画面', '›', t === 'home' ? 'ホーム' : t === 'apps' ? 'アプリ' : t === 'board' ? 'ボード' : SUB_LABEL[t], () => setTab(t), groupOf(t) === 'admin' ? (SUB_PARENT[t] ? '管理 › 設定' : '管理') : groupOf(t) === 'work' ? '作業' : '');
+  add('操作', '◎', 'おすすめ設定を見る', () => setTab('recommend'), '使い方に合わせた設定の変更案');
   add('操作', '＋', '新規セッション', () => openDialog());
   add('操作', '◷', 'ジョブを追加', () => { setTab('jobs'); window.JobsView.newJob(); });
   add('操作', '⚙', 'オートメーションを追加', () => { setTab('jobs'); window.JobsView.newAutomation(); });
@@ -1154,12 +1170,17 @@ function paletteItems() {
       else setTab('board');
     },
   });
+  window.RecommendView.init({
+    go: (tab) => setTab(tab),
+    onCount: (n) => { badges.recommend = n; refreshBadges(); },
+  });
+  $('#btn-search').addEventListener('click', () => { setTab('search'); $('#sr-q').focus(); });
   window.PaletteView.init({ items: paletteItems, dispatch: (text) => window.DispatchView.plan(text) });
   await resync();
   api('GET', '/api/settings').then((st) => {
     inboxToggle.checked = !!st.permissionInbox;
     window.JobsView.onSettings(st);
-    window.BoardView.onSettings(st);
+    if (window.BoardView.onSettings) window.BoardView.onSettings(st);
     window.SettingsView.onSettings(st);
   }).catch(() => {});
   applyPaneOrder();

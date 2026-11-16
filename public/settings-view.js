@@ -1,5 +1,5 @@
 'use strict';
-// 管理 → 設定 / 診断 / 検索 の画面と、はじめのガイド
+// 管理 → 設定 / 診断 の画面と、上部の検索・はじめのガイド
 
 (function () {
   const $ = (s) => document.querySelector(s);
@@ -136,7 +136,8 @@
       if (r.pending.length) $('#st-restore-note').textContent = `復元を予約しています(${r.pending.join(', ')})。サーバーを再起動すると反映します。`;
     }).catch(() => {});
     for (const a of document.querySelectorAll('.go-settings')) {
-      a.addEventListener('click', (e) => { e.preventDefault(); S.opts.go('settings'); });
+      // 詳細設定にある項目へのリンク(data-adv)なら、詳細を開いておく
+      a.addEventListener('click', (e) => { e.preventDefault(); if (a.dataset.adv) $('#set-adv').open = true; S.opts.go('settings'); });
     }
   }
 
@@ -205,6 +206,9 @@
       bindSettings();
       bindGuide();
       $('#dr-run').addEventListener('click', runDoctor);
+      $('#settings').addEventListener('click', (e) => {
+        if (e.target.closest('.go-rec')) { e.preventDefault(); S.opts.go('recommend'); }
+      });
       $('#sr-form').addEventListener('submit', (e) => { e.preventDefault(); runSearch(); });
       $('#sr-list').addEventListener('click', (e) => {
         const r = e.target.closest('.sr-row');
@@ -227,6 +231,23 @@
       el.className = p.limits.some((l) => l.reason) ? 'over' : p.limits.some((l) => l.percent >= l.threshold - 10) ? 'warn' : '';
     },
     budget: () => S.budget,
+    // おすすめと違う値の節に印を付ける(詳細設定の中にあれば、その見出しにも)
+    markSections(secs) {
+      const want = new Set(secs || []);
+      let adv = 0;
+      for (const sec of document.querySelectorAll('#settings .set-sec[data-sec]')) {
+        const on = want.has(sec.dataset.sec);
+        const h = sec.querySelector('h3');
+        let m = h.querySelector('.set-mark');
+        if (on && !m) { m = document.createElement('a'); m.href = '#'; m.className = 'set-mark go-rec'; m.textContent = 'おすすめあり'; m.title = 'おすすめを見る'; h.appendChild(m); }
+        if (!on && m) m.remove();
+        if (on && sec.closest('#set-adv')) adv += 1;
+      }
+      const sm = $('#set-adv summary');
+      let m = sm.querySelector('.set-mark');
+      if (adv && !m) { m = document.createElement('span'); m.className = 'set-mark'; sm.insertBefore(m, sm.querySelector('small')); }
+      if (m) { if (adv) m.textContent = `おすすめあり ${adv}`; else m.remove(); }
+    },
     runDoctor,
     search: runSearch,
     openGuide,
