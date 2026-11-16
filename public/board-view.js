@@ -79,10 +79,13 @@
     $('#mem-list').innerHTML = list.length ? list.map((m) => {
       const open = S.open.has(m.key);
       return `<div class="mem${open ? ' open' : ''}${m.expires && m.expires < today ? ' expired' : ''}" data-key="${esc(m.key)}">` +
-        `<div class="mem-head"><b class="mem-key">${esc(m.key)}</b>${badges(m)}${(m.tags || []).map((t) => `<span class="mem-tag">${esc(t)}</span>`).join('')}` +
-        `<span class="mem-by">${esc(m.author || '')} · ${fmtTime(m.updatedAt)}</span>` +
+        // 見出し: 左にキー・印・タグ(折り返す)、右上にボタン(折り返さない)、下の行に書いた人と時刻
+        '<div class="mem-head mem-item-head">' +
+        `<div class="mem-title"><b class="mem-key">${esc(m.key)}</b>${badges(m)}${(m.tags || []).map((t) => `<span class="mem-tag">${esc(t)}</span>`).join('')}</div>` +
+        '<div class="mem-acts">' +
         (m.verified ? '' : '<button class="icon-btn" data-mact="verify" title="確認済みにする">✓</button>') +
         '<button class="icon-btn" data-mact="edit" title="編集">✎</button><button class="icon-btn" data-mact="del" title="削除">✕</button></div>' +
+        `<span class="mem-by">${esc(m.author || '')} · ${fmtTime(m.updatedAt)}</span></div>` +
         `<div class="mem-val">${esc(open ? m.value : m.value.slice(0, 240) + (m.value.length > 240 ? '…' : ''))}</div></div>`;
     }).join('') : `<p class="jobs-empty">${S.memory.length ? '一致するものはありません' : 'エージェントは MCP ツール memory_write で書き込みます。ここから書くこともできます。'}</p>`;
     renderCandidates();
