@@ -96,3 +96,49 @@ test('push と PR 作成画面の URL', { skip: !hasGit && 'git がありませ�
   assert.match(gitx.compareUrl('https://gitlab.com/g/app.git', 'main', 'x'), /merge_requests\/new/);
   assert.strictEqual(gitx.compareUrl('/local/path', 'main', 'x'), null);
 });
+
+test('1 つのフォルダだけをコミットして push(リモートが進んでいたら pull --rebase)', { skip: !hasGit && 'git がありません' }, () => {
+  const base = path.join(home, `mx-${Date.now()}`);
+  const remote = path.join(base, 'remote.git');
+  const other = path.join(base, 'other');
+  const vault = path.join(base, 'vault');
+  const run = (cwd, ...a) => execFileSync('git', ['-C', cwd, '-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { stdio: 'ignore' });
+  fs.mkdirSync(base, { recursive: true });
+  execFileSync('git', ['init', '-q', '--bare', remote]);
+  execFileSync('git', ['clone', '-q', remote, other], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(other, 'Home.md'), 'home\n');
+  run(other, 'add', '.'); run(other, 'commit', '-qm', 'init'); run(other, 'push', '-q', 'origin', 'HEAD');
+  execFileSync('git', ['clone', '-q', remote, vault], { stdio: 'ignore' });
+
+  // フォルダの外の変更(未追跡のノート)はコミットしない
+  fs.mkdirSync(path.join(vault, 'mem'), { recursive: true });
+  fs.writeFileSync(path.join(vault, 'mem', 'a.md'), 'a\n');
+  fs.writeFileSync(path.join(vault, 'draft.md'), '下書き\n');
+  // 別の場所からリモートを進めておく(ふつうの push は拒否される)
+  fs.writeFileSync(path.join(other, 'b.md'), 'b\n');
+  run(other, 'add', '.'); run(other, 'commit', '-qm', 'cloud'); run(other, 'push', '-q');
+
+  const r = gitx.commitDirAndPush(vault, 'mem', '書き出し');
+  assert.deepStrictEqual(r, { committed: true, pushed: true });
+  const files = execFileSync('git', ['--git-dir', remote, 'ls-tree', '-r', '--name-only', 'HEAD'], { encoding: 'utf8' }).trim().split('\n').sort();
+  assert.deepStrictEqual(files, ['Home.md', 'b.md', 'mem/a.md']);
+  assert.ok(fs.existsSync(path.join(vault, 'draft.md'))); // 未追跡のノートはそのまま
+  // 変更がなければ何もしない
+  assert.deepStrictEqual(gitx.commitDirAndPush(vault, 'mem', '書き出し'), { committed: false, pushed: false });
+  // push しない指定ならコミットだけ
+  fs.writeFileSync(path.join(vault, 'mem', 'c.md'), 'c\n');
+  assert.deepStrictEqual(gitx.commitDirAndPush(vault, 'mem', '書き出し', { push: false }), { committed: true, pushed: false });
+  assert.throws(() => gitx.commitDirAndPush(home, 'mem', 'x'), /リポジトリではありません/);
+});
+
+test('Vault がリポジトリの子フォルダでも、そのフォルダだけをコミットする', { skip: !hasGit && 'git がありません' }, () => {
+  const { repo } = makeRepo();
+  const vault = path.join(repo, 'notes');
+  fs.mkdirSync(path.join(vault, 'mem'), { recursive: true });
+  fs.mkdirSync(path.join(repo, 'mem'), { recursive: true });
+  fs.writeFileSync(path.join(vault, 'mem', 'a.md'), 'a\n');
+  fs.writeFileSync(path.join(repo, 'mem', 'other.md'), 'x\n'); // ルート直下の同名フォルダはコミットしない
+  assert.deepStrictEqual(gitx.commitDirAndPush(vault, 'mem', '書き出し', { push: false }), { committed: true, pushed: false });
+  const files = execFileSync('git', ['-C', repo, 'ls-tree', '-r', '--name-only', 'HEAD'], { encoding: 'utf8' }).trim().split('\n').sort();
+  assert.deepStrictEqual(files, ['a.txt', 'notes/mem/a.md']);
+});

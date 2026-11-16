@@ -16,6 +16,8 @@ const { UsageTracker, createUsageScanner, costFor } = require('./usage');
 const { createJobManager } = require('./jobs');
 const { createAutomations } = require('./automations');
 const { createBus } = require('./bus');
+const memoryPromptLib = require('./memory-prompt');
+const memoryExportLib = require('./memory-export');
 const cmdline = require('./cmdline');
 const { createAudit, targetOf } = require('./audit');
 const gitx = require('./git');
@@ -96,9 +98,9 @@ const TMP_DIR = path.join(os.tmpdir(), 'claude-galaxy');
 const SETTINGS_FILE = path.join(TMP_DIR, `hooks-${PORT}.json`);
 const MCP_JS = path.join(__dirname, 'mcp-bus.js');
 // 共有バスのツールのうち、読むだけのもの・自分の記録を書くだけのものは確認なしで使えるようにする
-// (ジョブの登録・中止、ほかのセッションへの入力、メモリの削除は確認が要る)
+// (ジョブの登録・中止、ほかのセッションへの入力、メモリの削除は確認が要る。memory_propose は人が承認するまで何も変えない)
 const BUS_AUTO_ALLOW = [
-  'list_agents', 'read_messages', 'send_message', 'get_job', 'list_jobs', 'memory_read', 'memory_search', 'memory_write',
+  'list_agents', 'read_messages', 'send_message', 'get_job', 'list_jobs', 'memory_read', 'memory_search', 'memory_write', 'memory_propose',
 ].map((t) => `mcp__galaxy__${t}`);
 const { fwd } = cmdline;
 
@@ -170,25 +172,18 @@ function removeMcpConfig(id) {
 }
 
 // 共有メモリから、最初に渡す内容(--append-system-prompt-file)を作る
-//   query: 空白区切り。「tag:名前」はタグ、それ以外はキーの先頭か語の一致
+//   query: 空白区切り。「tag:名前」はタグ、それ以外はキーの先頭か語の一致。
+//   必須 → 確認済み → 新しい順に入れ、期限切れは外す(memory-prompt.js)。
+//   設定「学びを候補として残させる」がオンなら、memory_propose で学びを出す指示も足す
 const memoryFile = (id) => path.join(TMP_DIR, `memory-${PORT}-${id}.md`);
+function memoryPrompt(query) {
+  return memoryPromptLib.selectForPrompt(bus.memSearch('', { limit: 2000 }), query, {
+    learn: !!settings.memoryLearn && settings.busEnabled !== false,
+  });
+}
 function writeMemoryPrompt(id, query) {
-  const terms = String(query || '').split(/\s+/).filter(Boolean);
-  if (!terms.length) return null;
-  const picked = new Map();
-  for (const t of terms) {
-    const list = t.startsWith('tag:')
-      ? bus.memSearch('', { limit: 2000 }).filter((m) => (m.tags || []).includes(t.slice(4)))
-      : [...bus.memSearch('', { prefix: t, limit: 200 }), ...bus.memSearch(t, { limit: 200 })];
-    for (const m of list) picked.set(m.key, m);
-  }
-  if (!picked.size) return null;
-  let text = '# Claude Galaxy の共有メモリ(ほかのエージェントや人が残した知識)\n\n';
-  for (const m of picked.values()) {
-    const part = `## ${m.key}${m.tags && m.tags.length ? ` [${m.tags.join(', ')}]` : ''}\n${m.value}\n\n`;
-    if (text.length + part.length > 30000) { text += '(多いため、ここまでにしました。続きは memory_search で探してください)\n'; break; }
-    text += part;
-  }
+  const { text } = memoryPrompt(query);
+  if (!text) return null;
   fs.mkdirSync(TMP_DIR, { recursive: true });
   fs.writeFileSync(memoryFile(id), text, { mode: 0o600 });
   return memoryFile(id);
@@ -885,7 +880,53 @@ const bus = createBus({
       broadcast('board', { unreadUser: bus.unreadCount('user') });
       for (const s of sessions.values()) emit(s);
     }, 200);
+    scheduleMemoryExport();
   },
+});
+
+// ---- 共有メモリの書き出し(確認済みの項目を Vault のフォルダへ。memory-export.js)----
+//   設定: memoryExportVault(Vault のフォルダ)/ memoryExportMode(off / files / push)/ memoryExportAuto(変わったら自動で)
+//   自動のときは、変更がおさまってから 10 分後にまとめて 1 回書き出す
+const MEMORY_EXPORT_DELAY = 10 * 60 * 1000;
+let memoryExportTimer = null;
+let memoryExportLast = null; // { at, ok, exported, written, removed, blocked, committed, pushed, error, auto }
+function runMemoryExport({ auto = false } = {}) {
+  const mode = settings.memoryExportMode;
+  if (!settings.memoryExportVault || !['files', 'push'].includes(mode)) throw new Error('書き出し先の Vault を設定し、書き出し方を選んでください(設定 → 共有メモリの書き出し)');
+  const last = { at: Date.now(), auto, ok: false };
+  try {
+    const vault = resolveCwd(settings.memoryExportVault);
+    const r = memoryExportLib.exportTo(vault, bus.memSearch('', { limit: 2000 }));
+    Object.assign(last, { exported: r.exported, written: r.written.length, removed: r.removed.length, blocked: r.blocked, dir: r.dir });
+    if (mode === 'push') {
+      const g = gitx.commitDirAndPush(vault, memoryExportLib.SUBDIR, `エージェントの知識を書き出す(Claude Galaxy・${r.exported} 件)`);
+      Object.assign(last, g);
+    }
+    last.ok = true;
+    audit.log({ agent: 'user', agentName: auto ? '自動の書き出し' : 'あなた', kind: 'memory-export', target: r.dir,
+      detail: `${r.exported} 件(書いた ${r.written.length}・消した ${r.removed.length}・止めた ${r.blocked.length})${last.pushed ? '・push 済み' : ''}` });
+  } catch (e) {
+    last.error = e.message;
+  }
+  memoryExportLast = last;
+  broadcast('board', { unreadUser: bus.unreadCount('user') });
+  if (!last.ok && !auto) throw new Error(last.error);
+  return last;
+}
+// 書き出す対象(確認済みの項目)が変わったときだけ予約し直す(メッセージのやり取りでは延ばさない)
+let memoryExportSig = '';
+function scheduleMemoryExport() {
+  if (!settings.memoryExportAuto || !settings.memoryExportVault || !['files', 'push'].includes(settings.memoryExportMode)) return;
+  const sig = bus.memSearch('', { limit: 2000 }).filter((m) => m.verified).map((m) => `${m.key}\u0000${m.updatedAt}\u0000${m.expires}`).sort().join('\n');
+  if (sig === memoryExportSig) return;
+  memoryExportSig = sig;
+  clearTimeout(memoryExportTimer);
+  memoryExportTimer = setTimeout(() => { memoryExportTimer = null; runMemoryExport({ auto: true }); }, MEMORY_EXPORT_DELAY);
+  memoryExportTimer.unref();
+}
+const memoryExportStatus = () => ({
+  vault: settings.memoryExportVault || '', mode: settings.memoryExportMode || 'off', auto: !!settings.memoryExportAuto,
+  pending: !!memoryExportTimer, last: memoryExportLast, subdir: memoryExportLib.SUBDIR,
 });
 
 const { agentName, agentList, resolveAgent, typeInto, busCall } = createAgents({
@@ -943,7 +984,7 @@ const ctx = {
   removeMcpConfig, cleanupWorktree, broadcast, sseClients, resolveCwd, isClaudeCommand, assertCommandExists,
   agentName, agentList, resolveAgent, typeInto, busCall, hookAuth, runClaude, buildGraph,
   claudeMcpServers, claudeExtensions, targetOf,
-  budget, plan, cloud, usageScan, diagnose, search, onDiagHook, waitDiagHook, tokenFor, revokeToken, writeMemoryPrompt,
+  budget, plan, cloud, usageScan, diagnose, search, onDiagHook, waitDiagHook, tokenFor, revokeToken, writeMemoryPrompt, memoryPrompt, memoryPromptLib, runMemoryExport, memoryExportStatus,
   writeHookSettings, HOOK_JS, MCP_JS, TMP_DIR, SETTINGS_FILE, PORT,
   DEFAULT_COMMAND, JOB_COMMAND, SHELL, IS_WIN, PERMISSION_WAIT, APPS_PORT, ROOT_DIR: __dirname,
 };

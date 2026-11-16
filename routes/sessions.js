@@ -102,6 +102,17 @@ module.exports = function routes(ctx) {
     const b = req.body || {};
     if (typeof b.permissionInbox === 'boolean') settings.permissionInbox = b.permissionInbox;
     if (typeof b.busEnabled === 'boolean') settings.busEnabled = b.busEnabled;
+    if (typeof b.memoryLearn === 'boolean') settings.memoryLearn = b.memoryLearn; // 学びを候補として残させる(次に起動するものから)
+    // 共有メモリの書き出し(確認済みの項目を Vault のフォルダへ)
+    if (typeof b.memoryExportVault === 'string') {
+      try { settings.memoryExportVault = b.memoryExportVault.trim() ? resolveCwd(b.memoryExportVault) : ''; } catch (e) { return res.status(400).json({ error: e.message }); }
+    }
+    if (['off', 'files', 'push'].includes(b.memoryExportMode)) settings.memoryExportMode = b.memoryExportMode;
+    if (typeof b.memoryExportAuto === 'boolean') settings.memoryExportAuto = b.memoryExportAuto;
+    if (['memoryExportVault', 'memoryExportMode', 'memoryExportAuto'].some((k) => b[k] !== undefined)) {
+      ctx.audit.log({ agent: 'user', agentName: 'あなた', kind: 'memory-export-settings', target: settings.memoryExportVault || '(なし)',
+        detail: `書き出し方: ${settings.memoryExportMode}${settings.memoryExportAuto ? '・自動' : ''}` });
+    }
     if (Number.isFinite(b.maxConcurrentJobs)) settings.maxConcurrentJobs = Math.min(10, Math.max(1, Math.round(b.maxConcurrentJobs)));
     if (typeof b.auditEnabled === 'boolean') settings.auditEnabled = b.auditEnabled;
     if (Number.isFinite(b.auditDays)) settings.auditDays = Math.min(365, Math.max(1, Math.round(b.auditDays)));

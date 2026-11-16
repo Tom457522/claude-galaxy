@@ -234,6 +234,7 @@
     if (data.afterAutomationId) $('#af-after').value = data.afterAutomationId;
     $('#af-after-status').value = data.afterStatus || 'done';
     $('#jf-memory').value = t.memory || '';
+    $('#jf-memory-pv').classList.add('hidden');
     setKind(data.kind || 'cron');
     $('#jf-error').classList.add('hidden');
     $('#dlg-job').showModal();

@@ -11,7 +11,8 @@ const MAX_DIFF = 1024 * 1024; // 画面に出す差分の上限(文字数)
 function git(cwd, args, { allowFail = false, maxBuffer = 16 * 1024 * 1024, timeout = 20000 } = {}) {
   try {
     // 認証を聞かれても止まらないようにする(画面からは答えられないため)
-    const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+    // ssh のパスフレーズも聞かせない(ユーザーが GIT_SSH_COMMAND を決めていればそれを使う)
+    const env = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND || 'ssh -o BatchMode=yes' };
     return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout, maxBuffer, env, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
     if (allowFail) return null;
@@ -178,4 +179,41 @@ function pushBranch(info) {
   return { pushed: true, branch: info.branch, remote, url: compareUrl(remote, base && base !== 'HEAD' ? base : '', info.branch) };
 }
 
-module.exports = { diff, repoRoot, createWorktree, removeWorktree, commitAll, mergeInto, pushBranch, compareUrl };
+// リポジトリの 1 つのフォルダ(relDir)の変更だけをコミットして push する(共有メモリの書き出し用)
+//   ほかの変更はコミットしない。push が拒否されたら、作業ツリーにコミットしていない変更がないときだけ
+//   pull --rebase してからもう一度 push する(失敗したら rebase を取り消して止める)
+//   relDir は repo からの相対パス(repo がリポジトリの子フォルダでもよい)
+function commitDirAndPush(repo, relDir, message, { push = true } = {}) {
+  const root = repoRoot(repo);
+  if (!root) throw new Error(`git のリポジトリではありません: ${repo}`);
+  relDir = path.relative(root, path.resolve(fs.realpathSync(repo), relDir)).split(path.sep).join('/');
+  if (!relDir || relDir.startsWith('..')) throw new Error('書き出し先のフォルダがリポジトリの外です');
+  const who = ['-c', 'user.name=Claude Galaxy', '-c', 'user.email=claude-galaxy@localhost'];
+  git(root, ['add', '-A', '--', relDir]);
+  const staged = (git(root, ['diff', '--cached', '--name-only', '--', relDir]) || '').trim();
+  let committed = false;
+  if (staged) {
+    git(root, [...who, 'commit', '-q', '-m', message, '--', relDir]);
+    committed = true;
+  }
+  if (!push) return { committed, pushed: false };
+  const ahead = (git(root, ['rev-list', '--count', '@{u}..HEAD'], { allowFail: true }) || '').trim();
+  if (ahead === '') throw new Error('いまのブランチに push 先(upstream)がありません。Vault で一度 git push -u をしてください');
+  if (ahead === '0') return { committed, pushed: false };
+  try {
+    git(root, ['push'], { timeout: 120000 });
+  } catch (e) {
+    const tracked = (git(root, ['status', '--porcelain', '--untracked-files=no']) || '').trim();
+    if (tracked) throw new Error(`push できませんでした(リモートが進んでいる可能性があります)。Vault にコミットしていない変更があるため、自動では pull しません: ${e.message}`);
+    try {
+      git(root, [...who, 'pull', '--rebase', '-q'], { timeout: 120000 });
+    } catch (e2) {
+      git(root, ['rebase', '--abort'], { allowFail: true });
+      throw new Error(`pull --rebase に失敗したため止めました(rebase は取り消しました。書き出しのコミットは Vault に残っていて、次の書き出しで push します): ${e2.message}`);
+    }
+    git(root, ['push'], { timeout: 120000 });
+  }
+  return { committed, pushed: true };
+}
+
+module.exports = { diff, repoRoot, createWorktree, removeWorktree, commitAll, mergeInto, pushBranch, compareUrl, commitDirAndPush };
