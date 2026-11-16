@@ -33,14 +33,16 @@ const KEYS = {
   memoryExportMode: { label: '共有メモリの書き出し方', type: 'enum', values: ['off', 'files', 'push'], section: 'export', noAi: true },
 };
 const AUDIT_DAYS = [7, 30, 90, 365];
+// KEYS 自身のキーか(constructor などの継承プロパティを通さない)
+const isKey = (k) => Object.prototype.hasOwnProperty.call(KEYS, k);
 const EXPORT_MODE = { off: '書き出さない', files: 'ファイルを書くだけ', push: 'コミットして push' };
 const SUBSCRIPTION = ['pro', 'max', 'team', 'enterprise'];
 const DAY = 24 * 60 * 60 * 1000;
 
 // 値を型と範囲に合わせる(合わせられなければ undefined)
 function sanitize(key, v) {
+  if (!isKey(key)) return undefined;
   const k = KEYS[key];
-  if (!k) return undefined;
   if (k.type === 'bool') return typeof v === 'boolean' ? v : undefined;
   if (k.type === 'path') return typeof v === 'string' && v.length <= 1000 ? v : undefined;
   if (k.type === 'enum') return k.values.includes(v) ? v : undefined;
@@ -53,8 +55,8 @@ function sanitize(key, v) {
 }
 
 function fmt(key, v) {
+  if (!isKey(key)) return String(v);
   const k = KEYS[key];
-  if (!k) return String(v);
   if (k.type === 'bool') return v ? 'オン' : 'オフ';
   if (k.type === 'usd') return Number(v) ? `$${Number(v).toFixed(Number(v) % 1 ? 2 : 0)}` : '上限なし';
   if (k.type === 'pct') {
@@ -327,7 +329,7 @@ function parseAi(raw, settings = {}) {
   for (const x of Array.isArray(j.items) ? j.items.slice(0, 8) : []) {
     if (!x || typeof x !== 'object' || !x.patch || typeof x.patch !== 'object') continue;
     const patch = {};
-    for (const [k, v] of Object.entries(x.patch)) if (KEYS[k] && !KEYS[k].noAi) patch[k] = v;
+    for (const [k, v] of Object.entries(x.patch)) if (isKey(k) && !KEYS[k].noAi) patch[k] = v;
     let id = String(x.id || '').toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/^rule-/, '').slice(0, 40) || `ai-${items.length + 1}`;
     while (seen.has(id)) id += '-2';
     const it = item(settings, {

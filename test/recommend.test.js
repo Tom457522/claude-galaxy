@@ -26,6 +26,8 @@ test('値を型と範囲に合わせる', () => {
   assert.strictEqual(rec.sanitize('budgetDailyUsd', true), undefined);
   assert.strictEqual(rec.sanitize('memoryExportMode', 'rm'), undefined);
   assert.strictEqual(rec.sanitize('busEnabled', false), undefined); // 対象外のキー
+  assert.strictEqual(rec.sanitize('constructor', 1), undefined); // 継承プロパティは通さない
+  assert.strictEqual(rec.sanitize('toString', true), undefined);
 });
 
 test('切りのよい値への切り上げと分位点', () => {
@@ -123,6 +125,7 @@ test('AI の答えは、知らないキー・範囲外・いまと同じ値を�
     '{"id":"Gate!","title":"ゲート","patch":{"approvalGate":true,"busEnabled":false,"memoryExportMode":"push"},"reason":"r","priority":"high"},' +
     '{"id":"w","patch":{"planLimitWeeklyPct":250},"priority":"zzz"},' +
     '{"id":"same","patch":{"auditDays":30}},' +
+    '{"id":"proto","patch":{"constructor":1,"toString":true,"__proto__":{"approvalGate":true}}},' +
     '{"id":"bad","patch":"x"}]} 後ろ';
   const r = rec.parseAi(raw, BASE);
   assert.strictEqual(r.summary, '無人ジョブが多い使い方です。');
