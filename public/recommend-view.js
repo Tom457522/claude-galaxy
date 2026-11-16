@@ -12,6 +12,8 @@
       body: body ? JSON.stringify(body) : undefined,
     });
     const json = await res.json().catch(() => ({}));
+    // API が無い(404 で JSON でない)= 画面のファイルだけ新しく、動いているサーバーが更新前のまま
+    if (res.status === 404 && !json.error) throw new Error('サーバーがこの機能を知りません(更新前のサーバーが動いたままです)。Galaxy をいったん止めて、もう一度起動してください');
     if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
     return json;
   }

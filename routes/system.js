@@ -105,7 +105,13 @@ module.exports = function routes(ctx) {
     try {
       const f = recFacts();
       const rules = recommend.recommend(f, settings);
-      const ai = recommend.parseAi(await askClaude(recommend.aiPrompt(f, rules), { timeoutMs: 120000 }), settings);
+      let raw;
+      try { raw = await askClaude(recommend.aiPrompt(f, rules), { timeoutMs: 120000 }); } catch (e) {
+        // モデル名が無いときは Claude の API が 404 / not_found を返す
+        const hint = /404|not_found|model/i.test(e.message) ? '(設定 → 詳細設定 → エージェントの「窓口の振り分けに使うモデル」を確かめてください。空なら haiku を使います)' : '';
+        throw new Error(`Claude を呼び出せませんでした: ${e.message}${hint}`);
+      }
+      const ai = recommend.parseAi(raw, settings);
       if (!ai) throw new Error('Claude の答えを読めませんでした。もう一度試してください');
       // AI が扱わない項目(書き出し先など)の規則の案は残す
       // id が AI の案と重ならないよう rule- を付ける(画面は id で選択を管理する)
