@@ -1,9 +1,9 @@
 'use strict';
-// 自己診断・全文検索・バックアップと復元・予算・使用量の API
+// 自己診断・全文検索・バックアップと復元・予算・使用量・おすすめ設定の API
 
 module.exports = function routes(ctx) {
   const {
-    app, wrap, sessions, jobs, bus, store, budget, plan, cloud, usageScan, diagnose, search, waitDiagHook, tokenFor, runClaude, assertCommandExists, audit,
+    app, wrap, sessions, settings, jobs, automations, bus, store, budget, plan, cloud, usageScan, diagnose, search, waitDiagHook, tokenFor, runClaude, askClaude, recommend, assertCommandExists, audit,
     HOOK_JS, MCP_JS, TMP_DIR, PORT, SHELL, JOB_COMMAND,
   } = ctx;
 
@@ -75,5 +75,42 @@ module.exports = function routes(ctx) {
       const month = usageScan.between({ from: new Date(d.getFullYear(), d.getMonth(), 1).getTime(), to: now, bucketMs: 24 * 60 * 60 * 1000 });
       res.json({ ...st, windows, month: { cost: month.cost, tokens: month.tokens } });
     } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // おすすめ設定: 使い方の数値から変更案を作る(保存はしない。画面で選んでから PUT /api/settings で保存する)
+  const recFacts = () => {
+    let usage = null;
+    try { usage = usageScan.report({ days: 30, source: 'all' }); } catch (_) { usage = null; }
+    return recommend.facts({
+      settings, usage, plan: plan.status(), jobs: jobs.list(), automations: automations.list(),
+      vaults: settings.memoryExportVault ? [] : recommend.findVaults(),
+    });
+  };
+  // GET /api/settings/recommend?preset=save|unattended|safe … 規則だけで作る(Claude を呼ばない)
+  app.get('/api/settings/recommend', wrap((req) => {
+    const f = recFacts();
+    const name = req.query.preset ? String(req.query.preset) : '';
+    return {
+      facts: { plan: f.plan, usage: f.usage, jobs: f.jobs, automations: f.automations },
+      presets: recommend.presets(),
+      preset: name || null,
+      items: name ? recommend.preset(name, f, settings) : recommend.recommend(f, settings),
+    };
+  }));
+  // POST /api/settings/recommend/ai … 数値と設定値だけを Claude(ツールなし)に渡し、案の見直しと理由を作らせる
+  let recAiBusy = false; // 料金がかかるので、同時に 1 つだけ走らせる(連打・別タブ)
+  app.post('/api/settings/recommend/ai', async (_req, res) => {
+    if (recAiBusy) return res.status(409).json({ error: 'いま Claude に見直してもらっています。終わるまでお待ちください' });
+    recAiBusy = true;
+    try {
+      const f = recFacts();
+      const rules = recommend.recommend(f, settings);
+      const ai = recommend.parseAi(await askClaude(recommend.aiPrompt(f, rules), { timeoutMs: 120000 }), settings);
+      if (!ai) throw new Error('Claude の答えを読めませんでした。もう一度試してください');
+      // AI が扱わない項目(書き出し先など)の規則の案は残す
+      // id が AI の案と重ならないよう rule- を付ける(画面は id で選択を管理する)
+      const keep = rules.filter((r) => Object.keys(r.patch).some((k) => recommend.KEYS[k].noAi)).map((r) => ({ ...r, id: `rule-${r.id}` }));
+      res.json({ summary: ai.summary, items: [...ai.items, ...keep] });
+    } catch (e) { res.status(400).json({ error: e.message }); } finally { recAiBusy = false; }
   });
 };

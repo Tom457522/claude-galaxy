@@ -1129,3 +1129,50 @@ dialog.dlg-confirm { width: 440px; }
 .set-wide { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
 .set-wide textarea { width: 100%; font-family: var(--mono, monospace); font-size: 12px; }
 .mem-list { min-height: 140px; }
+
+/* ---- 管理: サブタブの 2 段目(設定の中の画面)と上部の検索 ---- */
+.subnav-sep { color: var(--muted); padding: 5px 4px 0 10px; font-size: 12px; }
+.subtab.sub2 { font-size: 11px; padding: 5px 9px; }
+.top-search { padding: 4px 10px; white-space: nowrap; }
+.top-search.active { border-color: var(--accent); color: var(--accent-bright); }
+
+/* ---- 管理: おすすめ設定 ---- */
+.rc-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.rc-fact { border: 1px solid var(--border); border-radius: 6px; background: var(--card); padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rc-fact small { color: var(--muted); font-size: 10px; }
+.rc-fact b { font-size: 13px; color: var(--heading); overflow-wrap: anywhere; }
+.rc-presets { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.rc-presets #rc-preset-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.rc-preset.active { border-color: var(--accent); color: var(--accent-bright); background: var(--accent-dim); }
+.rc-summary { border-left: 3px solid var(--accent); background: var(--card); padding: 8px 12px; margin: 0 0 12px; font-size: 12px; line-height: 1.6; }
+.rc-summary b { color: var(--accent-bright); margin-right: 6px; }
+.rc-list { display: flex; flex-direction: column; gap: 8px; }
+.rc-item { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--border); border-left-width: 3px; border-radius: 6px; background: var(--card); padding: 10px 12px; cursor: pointer; }
+.rc-item:hover { border-color: var(--accent); }
+.rc-item.rc-high { border-left-color: var(--danger); }
+.rc-item.rc-mid { border-left-color: var(--accent); }
+.rc-item.rc-low { border-left-color: var(--border); }
+.rc-item input { margin-top: 3px; flex: none; }
+.rc-body { min-width: 0; flex: 1; }
+.rc-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rc-title b { color: var(--heading); font-size: 13px; }
+.rc-pri { font-size: 10px; border-radius: 8px; padding: 0 6px; background: var(--panel-2); color: var(--muted); }
+.rc-high .rc-pri { background: var(--danger); color: #fff; }
+.rc-mid .rc-pri { background: var(--accent-dim); color: var(--accent-bright); }
+.rc-changes { list-style: none; margin: 6px 0 4px; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.rc-changes li { display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; }
+.rc-changes span { color: var(--muted); }
+.rc-changes s { color: var(--muted); }
+.rc-changes i { color: var(--muted); font-style: normal; }
+.rc-changes b { color: var(--accent-bright); overflow-wrap: anywhere; }
+.rc-reason { margin: 0; font-size: 12px; color: var(--text); line-height: 1.6; }
+.rc-ok { color: var(--ok); border: 1px dashed var(--border); border-radius: 6px; padding: 14px; margin: 0; }
+.rc-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 14px 0 8px; position: sticky; bottom: 0; background: var(--page-bg); padding: 8px 0; }
+
+/* ---- 設定: 基本と詳細・おすすめの印 ---- */
+.set-lead { margin: -8px 0 12px; }
+.set-group { margin: 0 0 8px; font-size: 11px; letter-spacing: .14em; color: var(--muted); }
+.set-mark { display: inline-block; font-size: 10px; font-weight: 400; border-radius: 8px; padding: 0 6px; margin-left: 8px; background: var(--accent-dim); color: var(--accent-bright); text-decoration: none; letter-spacing: 0; }
+.set-adv { margin-top: 4px; }
+.set-adv > summary { cursor: pointer; padding: 8px 0 10px; color: var(--heading); font-size: 13px; }
+.set-adv > summary small { color: var(--muted); font-weight: 400; margin-left: 6px; }

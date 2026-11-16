@@ -5,7 +5,7 @@
 //     プロンプト中の「CALL <tool> <json>」行は、--mcp-config の galaxy MCP サーバーを実際に呼ぶ
 //     「PERM」を含むと PermissionRequest hook を呼び、「SLEEP」を含むと 30 秒待つ
 //     「ARGS」を含むと、受け取った引数と共有メモリのファイルの中身を結果に入れる
-//   claude -p --output-format json ... : ディスパッチャー用。候補フォルダの先頭を選んだ案を返す
+//   claude -p --output-format json ... : ディスパッチャー用。候補フォルダの先頭を選んだ案を返す(おすすめ設定の依頼なら固定の案)
 //   claude mcp list : 固定の一覧を出す / claude --version : 固定の版を出す
 //   それ以外(対話起動): 引数を表示して入力を待つ
 const { spawn, spawnSync } = require('child_process');
@@ -39,6 +39,12 @@ process.stdin.on('data', (c) => { prompt += c; });
 process.stdin.on('end', async () => {
   const sid = `aaaaaaaa-bbbb-cccc-dddd-${String(Date.now()).slice(-12)}`;
   const fmt = args[args.indexOf('--output-format') + 1];
+  if (fmt === 'json' && prompt.includes('設定アドバイザー')) {
+    // おすすめ設定: 知らないキーも混ぜて返す(本体が落とすことを確かめる)
+    const ans = { summary: 'fake advisor', items: [{ id: 'gate', title: 'ゲート', patch: { approvalGate: true, busEnabled: false }, reason: 'fake', priority: 'high' }] };
+    out({ type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(ans) });
+    return;
+  }
   if (fmt === 'json') {
     // ディスパッチャー: 「- name: path」の最初の候補を選ぶ
     const m = /^- [^:]+: (.+?)(?: \[git\])? \(/m.exec(prompt);

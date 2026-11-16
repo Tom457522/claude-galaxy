@@ -273,6 +273,22 @@ test('Claude Galaxy サーバー', { skip }, async (t) => {
     assert.ok(hits.some((h) => h.kind === 'memory' && h.id === 'team/db'));
   });
 
+  await t.test('おすすめ設定(規則・プリセット・Claude の見直し)', async () => {
+    const r = await api('GET', '/api/settings/recommend');
+    assert.ok(Array.isArray(r.items));
+    assert.deepStrictEqual(r.presets.map((p) => p.id), ['save', 'unattended', 'safe']);
+    assert.ok(r.facts.usage && r.facts.jobs);
+    const p = await api('GET', '/api/settings/recommend?preset=safe');
+    assert.strictEqual(p.preset, 'safe');
+    assert.ok(p.items.every((i) => i.source === 'preset'));
+    const ai = await api('POST', '/api/settings/recommend/ai', {});
+    assert.strictEqual(ai.summary, 'fake advisor');
+    const gate = ai.items.find((i) => i.id === 'gate');
+    assert.deepStrictEqual(gate.patch, { approvalGate: true }); // 対象外のキーは落とす
+    // 案は保存しない
+    assert.strictEqual((await api('GET', '/api/settings')).approvalGate, false);
+  });
+
   await t.test('バックアップを予約すると、次の起動で反映する', async () => {
     const b = await api('GET', '/api/backup');
     b.files['settings.json'] = { ...b.files['settings.json'], maxConcurrentJobs: 7 };

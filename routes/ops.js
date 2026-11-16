@@ -11,7 +11,7 @@ module.exports = function routes(ctx) {
     permissions, permInfo, resolvePermission, cancelPermissions, nextPermId,
     createSession, restartSession, publicInfo, emit, persist, setStatus, applyHook, trackTranscript,
     removeMcpConfig, cleanupWorktree, broadcast, sseClients, resolveCwd, isClaudeCommand, assertCommandExists,
-    agentName, agentList, resolveAgent, typeInto, busCall, hookAuth, runClaude, buildGraph,
+    agentName, agentList, resolveAgent, typeInto, busCall, hookAuth, runClaude, askClaude, buildGraph,
     claudeMcpServers, claudeExtensions, targetOf,
     DEFAULT_COMMAND, JOB_COMMAND, SHELL, IS_WIN, PERMISSION_WAIT, APPS_PORT, ROOT_DIR
   } = ctx;
@@ -127,15 +127,7 @@ module.exports = function routes(ctx) {
       if (b.useClaude !== false) {
         try {
           assertCommandExists(JOB_COMMAND, SHELL, os.homedir());
-          const model = /^[A-Za-z0-9._-]{1,40}$/.test(settings.dispatchModel || '') ? settings.dispatchModel : 'haiku';
-          ask = async (prompt) => {
-            // ツールなし・保存なし・hooks なし(--settings を渡さない)で 1 回だけ答えさせる
-            const r = await runClaude(`-p --output-format json --model ${model} --tools "" --no-session-persistence --strict-mcp-config`, { cwd: os.homedir(), input: prompt, timeoutMs: 90000 });
-            let j = null;
-            try { j = JSON.parse(r.out); } catch (_) { /* ignore */ }
-            if (!j || j.is_error) throw new Error((j && (j.result || j.subtype)) || r.err.trim().split('\n').pop() || `終了コード ${r.code}`);
-            return j.result;
-          };
+          ask = (prompt) => askClaude(prompt);
         } catch (_) { ask = null; }
       }
       res.json(await dispatch.plan(b.text, { roots, recent, fallbackCwd: os.homedir(), ask }));

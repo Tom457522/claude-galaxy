@@ -29,6 +29,7 @@ const { createPlanMonitor } = require('./plan');
 const { createCloudUsage } = require('./cloud');
 const { diagnose } = require('./doctor');
 const { search } = require('./search');
+const recommend = require('./recommend');
 
 const IS_WIN = process.platform === 'win32';
 const HOST = '127.0.0.1'; // ローカルホスト限定(外部公開しない)
@@ -972,6 +973,17 @@ function runClaude(args, { cwd, input = '', timeoutMs = 60000 } = {}) {
   });
 }
 
+// Claude に 1 回だけ答えさせる(ツールなし・保存なし・hooks なし。--settings を渡さない)。
+// 窓口の振り分けとおすすめ設定で使う。モデルは設定の「窓口の振り分けに使うモデル」
+async function askClaude(prompt, { timeoutMs = 90000 } = {}) {
+  assertCommandExists(JOB_COMMAND, SHELL, os.homedir());
+  const model = /^[A-Za-z0-9._-]{1,40}$/.test(settings.dispatchModel || '') ? settings.dispatchModel : 'haiku';
+  const r = await runClaude(`-p --output-format json --model ${model} --tools "" --no-session-persistence --strict-mcp-config`, { cwd: os.homedir(), input: prompt, timeoutMs });
+  let j = null;
+  try { j = JSON.parse(r.out); } catch (_) { /* ignore */ }
+  if (!j || j.is_error) throw new Error((j && (j.result || j.subtype)) || r.err.trim().split('\n').pop() || `終了コード ${r.code}`);
+  return j.result;
+}
 
 let permSeq = 0;
 const nextPermId = () => `p${++permSeq}`;
@@ -982,7 +994,7 @@ const ctx = {
   permissions, permInfo, resolvePermission, cancelPermissions, nextPermId,
   createSession, restartSession, publicInfo, emit, persist, setStatus, applyHook, trackTranscript,
   removeMcpConfig, cleanupWorktree, broadcast, sseClients, resolveCwd, isClaudeCommand, assertCommandExists,
-  agentName, agentList, resolveAgent, typeInto, busCall, hookAuth, runClaude, buildGraph,
+  agentName, agentList, resolveAgent, typeInto, busCall, hookAuth, runClaude, askClaude, recommend, buildGraph,
   claudeMcpServers, claudeExtensions, targetOf,
   budget, plan, cloud, usageScan, diagnose, search, onDiagHook, waitDiagHook, tokenFor, revokeToken, writeMemoryPrompt, memoryPrompt, memoryPromptLib, runMemoryExport, memoryExportStatus,
   writeHookSettings, HOOK_JS, MCP_JS, TMP_DIR, SETTINGS_FILE, PORT,
